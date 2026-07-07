@@ -33,7 +33,7 @@ const BookingSection = () => {
 
   // Load schedule events from Google Calendar API on mount to act as source of truth
   useEffect(() => {
-    fetch('/api/calendar')
+    fetch('/api/calendar?realtime=true')
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data.bookings)) {
@@ -265,7 +265,7 @@ const BookingSection = () => {
           setStep(3);
           setSelectedTime('');
           
-          fetch('/api/calendar')
+          fetch('/api/calendar?realtime=true')
             .then((res) => res.json())
             .then((data) => {
               if (Array.isArray(data.bookings)) {

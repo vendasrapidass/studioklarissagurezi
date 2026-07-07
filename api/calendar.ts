@@ -99,49 +99,225 @@ export default async function handler(req: any, res: any) {
       const timeMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
       const timeMax = new Date(now.getFullYear(), now.getMonth() + 3, 1).toISOString();
 
-      // Consultar registros diretamente do Supabase
-      const { data: dbEvents, error: dbError } = await supabase
-        .from('appointments')
-        .select('*')
-        .neq('status', 'cancelled')
-        .gte('data_hora_inicio', timeMin)
-        .lte('data_hora_inicio', timeMax);
+      if (req.query.realtime === 'true') {
+        // ----------------------------------------------------
+        // REALTIME: Consultar Google Calendar diretamente (camada extra de validação)
+        // ----------------------------------------------------
+        const response = await calendar.events.list({
+          calendarId: activeCalendarId,
+          timeMin,
+          timeMax,
+          singleEvents: true,
+          orderBy: 'startTime',
+        });
 
-      if (dbError) {
-        throw dbError;
-      }
+        const events = response.data.items || [];
+        const bookings: any[] = [];
+        const blocks: any[] = [];
 
-      const bookings: any[] = [];
-      const blocks: any[] = [];
+        for (const event of events) {
+          if (!event.id) continue;
 
-      for (const item of dbEvents || []) {
-        const parsedStart = parseDateTimeToSaoPaulo(item.data_hora_inicio);
-        const parsedEnd = parseDateTimeToSaoPaulo(item.data_hora_fim);
+          const shared = event.extendedProperties?.shared;
+          const summary = event.summary || '';
+          const summaryLower = summary.toLowerCase();
 
-        if (item.status === 'blocked') {
-          blocks.push({
-            id: item.id,
-            date: parsedStart ? parsedStart.date : '',
-            allDay: item.duracao_minutos >= 1440,
-            start: parsedStart ? parsedStart.time : '',
-            end: parsedEnd ? parsedEnd.time : '',
-            reason: item.servico_nome || 'Bloqueio',
-          });
-        } else {
-          bookings.push({
-            id: item.id,
-            service: item.servico_nome || '',
-            price: getServicePrice(item.servico_nome || ''),
-            date: parsedStart ? parsedStart.date : '',
-            time: parsedStart ? parsedStart.time : '',
-            name: item.cliente_nome || '',
-            phone: item.cliente_telefone || '',
-            status: item.status,
-          });
+          const hasBlockKeyword = summaryLower.includes('folga') || 
+                                  summaryLower.includes('bloqueado') || 
+                                  summaryLower.includes('bloqueio') ||
+                                  summaryLower.includes('indisponível') ||
+                                  summaryLower.includes('indisponivel');
+          
+          const hasDashSeparator = summary.includes(' - ');
+          const isBlock = shared?.type === 'block' || hasBlockKeyword || !hasDashSeparator;
+          const endStr = event.end?.dateTime || event.end?.date;
+          const endDate = endStr ? new Date(endStr) : new Date();
+          const isPast = endDate.getTime() < now.getTime();
+
+          if (isBlock) {
+            const allDay = shared?.allDay === 'true' || !!event.start?.date;
+            let startVal = shared?.start;
+            let endVal = shared?.end;
+            let dateVal = shared?.date || '';
+
+            if (!allDay && event.start?.dateTime && event.end?.dateTime) {
+              const parsedStart = parseDateTimeToSaoPaulo(event.start.dateTime);
+              const parsedEnd = parseDateTimeToSaoPaulo(event.end.dateTime);
+              if (parsedStart && parsedEnd) {
+                dateVal = parsedStart.date;
+                startVal = parsedStart.time;
+                endVal = parsedEnd.time;
+              }
+            }
+
+            if (!dateVal) {
+              const startString = event.start?.date || event.start?.dateTime;
+              if (startString) {
+                const [y, m, d] = startString.split('T')[0].split('-');
+                dateVal = `${d}/${m}/${y}`;
+              }
+            }
+            if (!dateVal) {
+              const dObj = new Date();
+              const pad = (n: number) => String(n).padStart(2, '0');
+              dateVal = `${pad(dObj.getDate())}/${pad(dObj.getMonth() + 1)}/${dObj.getFullYear()}`;
+            }
+
+            blocks.push({
+              id: shared?.id || event.id,
+              date: shared?.date || dateVal,
+              allDay,
+              start: shared?.start || startVal,
+              end: shared?.end || endVal,
+              reason: shared?.reason || summary.replace(/^(Bloqueio - |AGENDA BLOQUEADA - )/i, '') || 'Bloqueio',
+            });
+          } else {
+            let service = '';
+            let name = 'Cliente Google';
+            let phone = '';
+            let price = 0;
+            let status = 'accepted';
+
+            if (shared) {
+              service = shared.service || '';
+              name = shared.name || '';
+              phone = shared.phone || '';
+            } else {
+              const parts = summary.split(' - ');
+              if (parts.length >= 2) {
+                service = parts.slice(0, -1).join(' - ').trim();
+                name = parts[parts.length - 1].trim();
+              } else {
+                service = summary;
+              }
+            }
+
+            if (shared?.price) {
+              price = Number(shared.price);
+            } else {
+              const desc = event.description || '';
+              const priceDescMatch = desc.match(/Valor:\s*R\$\s*(\d+)/i) || desc.match(/Valor:\s*(\d+)/i);
+              if (priceDescMatch) {
+                price = Number(priceDescMatch[1]);
+              } else {
+                const rsMatch = summary.match(/R\$\s*(\d+)(?:[.,]\d+)?/i);
+                if (rsMatch) {
+                  price = Number(rsMatch[1]);
+                } else {
+                  const numMatch = summary.match(/\b(\d+)\b/);
+                  if (numMatch) {
+                    price = Number(numMatch[1]);
+                  }
+                }
+              }
+
+              if (price === 0 && service) {
+                price = getServicePrice(service);
+              }
+            }
+
+            if (isPast) {
+              status = 'completed';
+            } else {
+              let parsedStatus = 'accepted';
+              if (shared?.status) {
+                parsedStatus = shared.status;
+              } else {
+                const desc = event.description || '';
+                const statusMatch = desc.match(/Status:\s*(.*)/i);
+                if (statusMatch) {
+                  parsedStatus = statusMatch[1].trim();
+                } else if (summary.includes('[Confirmado]')) {
+                  parsedStatus = 'accepted';
+                } else if (summary.includes('[Concluído]')) {
+                  parsedStatus = 'completed';
+                }
+              }
+              status = parsedStatus === 'completed' ? 'completed' : 'accepted';
+            }
+
+            let dateVal = '';
+            let timeVal = '';
+
+            if (event.start?.dateTime) {
+              const parsed = parseDateTimeToSaoPaulo(event.start.dateTime);
+              if (parsed) {
+                dateVal = parsed.date;
+                timeVal = parsed.time;
+              }
+            } else if (event.start?.date) {
+              const [y, m, d] = event.start.date.split('-');
+              dateVal = `${d}/${m}/${y}`;
+              timeVal = '08:00';
+            }
+
+            if (!dateVal) {
+              const dObj = new Date();
+              const pad = (n: number) => String(n).padStart(2, '0');
+              dateVal = `${pad(dObj.getDate())}/${pad(dObj.getMonth() + 1)}/${dObj.getFullYear()}`;
+            }
+
+            bookings.push({
+              id: shared?.id || event.id,
+              service,
+              price,
+              date: shared?.date || dateVal,
+              time: shared?.time || timeVal,
+              name,
+              phone,
+              status,
+            });
+          }
         }
-      }
 
-      return res.status(200).json({ bookings, blocks });
+        return res.status(200).json({ bookings, blocks });
+      } else {
+        // ----------------------------------------------------
+        // DATABASE: Consultar registros do Supabase (Dashboard Admin)
+        // ----------------------------------------------------
+        const { data: dbEvents, error: dbError } = await supabase
+          .from('appointments')
+          .select('*')
+          .neq('status', 'cancelled')
+          .gte('data_hora_inicio', timeMin)
+          .lte('data_hora_inicio', timeMax);
+
+        if (dbError) {
+          throw dbError;
+        }
+
+        const bookings: any[] = [];
+        const blocks: any[] = [];
+
+        for (const item of dbEvents || []) {
+          const parsedStart = parseDateTimeToSaoPaulo(item.data_hora_inicio);
+          const parsedEnd = parseDateTimeToSaoPaulo(item.data_hora_fim);
+
+          if (item.status === 'blocked') {
+            blocks.push({
+              id: item.id,
+              date: parsedStart ? parsedStart.date : '',
+              allDay: item.duracao_minutos >= 1440,
+              start: parsedStart ? parsedStart.time : '',
+              end: parsedEnd ? parsedEnd.time : '',
+              reason: item.servico_nome || 'Bloqueio',
+            });
+          } else {
+            bookings.push({
+              id: item.id,
+              service: item.servico_nome || '',
+              price: getServicePrice(item.servico_nome || ''),
+              date: parsedStart ? parsedStart.date : '',
+              time: parsedStart ? parsedStart.time : '',
+              name: item.cliente_nome || '',
+              phone: item.cliente_telefone || '',
+              status: item.status,
+            });
+          }
+        }
+
+        return res.status(200).json({ bookings, blocks });
+      }
     }
 
     // ----------------------------------------------------
