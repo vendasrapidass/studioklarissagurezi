@@ -1,8 +1,6 @@
 import { google } from 'googleapis';
 import { createClient } from '@supabase/supabase-js';
 
-const calendarId = 'guilhermesuzena10@gmail.com';
-
 // Configuração do Google Auth com a Service Account
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -19,6 +17,25 @@ const supabase = createClient(
   process.env.SUPABASE_URL || '',
   process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 );
+
+// Função para buscar o ID da agenda dinâmica do estúdio no Supabase
+async function getDynamicCalendarId(): Promise<string> {
+  try {
+    const { data, error } = await supabase
+      .from('studio_config')
+      .select('google_calendar_id')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (data?.google_calendar_id) {
+      return data.google_calendar_id;
+    }
+  } catch (err) {
+    console.error("Error fetching dynamic calendarId:", err);
+  }
+  return 'guilhermesuzena10@gmail.com'; // fallback padrão
+}
 
 function parseDateTimeToSaoPaulo(isoString: string) {
   try {
@@ -68,6 +85,9 @@ export default async function handler(req: any, res: any) {
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
+
+  // Resolve dynamic calendarId from database
+  const activeCalendarId = await getDynamicCalendarId();
 
   try {
     // ----------------------------------------------------
@@ -219,7 +239,7 @@ export default async function handler(req: any, res: any) {
         const description = `Cliente: ${booking.name}\nContato: ${booking.phone}\nValor: R$ ${booking.price},00`;
 
         await calendar.events.insert({
-          calendarId,
+          calendarId: activeCalendarId,
           requestBody: {
             id: eventId,
             summary: title,
@@ -300,7 +320,7 @@ export default async function handler(req: any, res: any) {
         }
 
         await calendar.events.insert({
-          calendarId,
+          calendarId: activeCalendarId,
           requestBody: {
             id: eventId,
             summary: title,
@@ -366,7 +386,7 @@ export default async function handler(req: any, res: any) {
         const description = `Cliente: ${booking.name}\nContato: ${booking.phone}\nValor: R$ ${booking.price},00`;
 
         await calendar.events.update({
-          calendarId,
+          calendarId: activeCalendarId,
           eventId,
           requestBody: {
             summary: title,
@@ -440,7 +460,7 @@ export default async function handler(req: any, res: any) {
         }
 
         await calendar.events.update({
-          calendarId,
+          calendarId: activeCalendarId,
           eventId,
           requestBody: {
             summary: title,
@@ -486,7 +506,7 @@ export default async function handler(req: any, res: any) {
       // 2. Excluir do Google Calendar
       try {
         await calendar.events.delete({
-          calendarId,
+          calendarId: activeCalendarId,
           eventId,
         });
       } catch (err: any) {

@@ -16,3 +16,12 @@ CREATE TABLE IF NOT EXISTS appointments (
 -- Índices para buscas rápidas por faixa de horário e por ID do evento do Google Calendar
 CREATE INDEX IF NOT EXISTS idx_appointments_time ON appointments (data_hora_inicio, data_hora_fim);
 CREATE INDEX IF NOT EXISTS idx_appointments_google_event_id ON appointments (google_event_id);
+
+-- Configurações de Provisionamento do Google Calendar por Estúdio
+CREATE TABLE IF NOT EXISTS studio_config (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nome_do_estudio TEXT NOT NULL,
+  email_pessoal TEXT NOT NULL UNIQUE,
+  google_calendar_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

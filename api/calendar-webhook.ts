@@ -1,8 +1,6 @@
 import { google } from 'googleapis';
 import { createClient } from '@supabase/supabase-js';
 
-const calendarId = 'guilhermesuzena10@gmail.com';
-
 // Configuração do Google Auth com a Service Account
 const auth = new google.auth.GoogleAuth({
   credentials: {
@@ -19,6 +17,25 @@ const supabase = createClient(
   process.env.SUPABASE_URL || '',
   process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 );
+
+// Função para buscar o ID da agenda dinâmica do estúdio no Supabase
+async function getDynamicCalendarId(): Promise<string> {
+  try {
+    const { data, error } = await supabase
+      .from('studio_config')
+      .select('google_calendar_id')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (data?.google_calendar_id) {
+      return data.google_calendar_id;
+    }
+  } catch (err) {
+    console.error("Error fetching dynamic calendarId:", err);
+  }
+  return 'guilhermesuzena10@gmail.com'; // fallback padrão
+}
 
 export default async function handler(req: any, res: any) {
   // CORS Headers
@@ -37,13 +54,16 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({ status: 'synchronized' });
   }
 
+  // Resolve dynamic calendarId from database
+  const activeCalendarId = await getDynamicCalendarId();
+
   try {
     // Buscar eventos modificados nos últimos 3 minutos no Google Calendar
     const now = new Date();
     const updatedMin = new Date(now.getTime() - 3 * 60 * 1000).toISOString();
 
     const response = await calendar.events.list({
-      calendarId,
+      calendarId: activeCalendarId,
       updatedMin,
       singleEvents: true,
       showDeleted: true,

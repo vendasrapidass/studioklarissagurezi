@@ -3,12 +3,12 @@ import { Booking, SERVICES, generateWhatsAppUrl, formatPhone, ScheduleBlock } fr
 import { getBookings, saveBookings, getCompleted, saveCompleted, addCompleted, removeCompleted, addBooking, getBlocks, saveBlocks, addBlock, removeBlock } from '@/lib/bookingStore';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { CalendarDays, DollarSign, Scissors, TrendingUp, ArrowLeft, Plus, X, Check, Clock, Pencil, Trash2, Phone, Search } from 'lucide-react';
+import { CalendarDays, DollarSign, Scissors, TrendingUp, ArrowLeft, Plus, X, Check, Clock, Pencil, Trash2, Phone, Search, Settings } from 'lucide-react';
 
 const REFUSE_REASONS = ['Imprevisto', 'Indisponibilidade', 'Problema pessoal', 'Horário não disponível'];
 
 type FilterType = 'today' | 'week' | 'month' | 'year';
-type TabType = 'bookings' | 'dashboard' | 'add';
+type TabType = 'bookings' | 'dashboard' | 'add' | 'settings';
 
 const AdminPanel = () => {
   const navigate = useNavigate();
@@ -55,6 +55,41 @@ const AdminPanel = () => {
   const [blockEnd, setBlockEnd] = useState('');
   const [blockReason, setBlockReason] = useState('');
   const [blocks, setBlocks] = useState<ScheduleBlock[]>([]);
+
+  // Calendar Provisioning State
+  const [studioName, setStudioName] = useState('Studio Klarissa Guarezi');
+  const [ownerEmail, setOwnerEmail] = useState('');
+  const [isProvisioning, setIsProvisioning] = useState(false);
+
+  const handleProvisionCalendar = () => {
+    setIsProvisioning(true);
+    fetch('/api/calendar/provision', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email_pessoal: ownerEmail,
+        nome_do_estudio: studioName,
+      }),
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw errData;
+        }
+        return res.json();
+      })
+      .then((data) => {
+        toast.success("Agenda criada! Peça para a cliente aceitar o convite no e-mail dela.");
+        setIsProvisioning(false);
+      })
+      .catch((err) => {
+        console.error("Error provisioning calendar:", err);
+        toast.error(err?.message || "Ocorreu um erro ao criar a agenda. Tente novamente.");
+        setIsProvisioning(false);
+      });
+  };
 
   const reload = () => {
     // Carregamento imediato do local storage para feedback instantâneo
@@ -571,6 +606,7 @@ const AdminPanel = () => {
     { key: 'bookings', label: 'Agendamentos', icon: <CalendarDays className="w-4 h-4" />, badge: bookings.length + blocks.length },
     { key: 'dashboard', label: 'Dashboard', icon: <TrendingUp className="w-4 h-4" /> },
     { key: 'add', label: 'Adicionar', icon: <Plus className="w-4 h-4" /> },
+    { key: 'settings', label: 'Configurações', icon: <Settings className="w-4 h-4" /> },
   ];
 
   return (
@@ -1180,6 +1216,49 @@ const AdminPanel = () => {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ===== SETTINGS TAB ===== */}
+          {tab === 'settings' && (
+            <div className="space-y-6 max-w-md mx-auto animate-in fade-in duration-300">
+              <div className="bg-card/80 backdrop-blur-xl p-6 md:p-8 rounded-2xl border border-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_20px_50px_-15px_rgba(0,0,0,0.5)] space-y-6">
+                <div>
+                  <h3 className="text-lg font-bold text-foreground mb-1">Vincular Google Agenda</h3>
+                  <p className="text-xs text-muted-foreground">Crie e configure uma agenda automática para o seu estúdio integrada com a sua conta Google pessoal.</p>
+                </div>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2 block">Nome do Estúdio</label>
+                    <input
+                      type="text"
+                      value={studioName}
+                      onChange={e => setStudioName(e.target.value)}
+                      placeholder="Ex: Studio Klarissa Guarezi"
+                      className="w-full bg-background/50 border border-primary/10 focus:border-primary/40 p-3.5 rounded-xl outline-none transition-all text-foreground text-sm placeholder:text-muted-foreground/40"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2 block">E-mail Pessoal (Gmail)</label>
+                    <input
+                      type="email"
+                      value={ownerEmail}
+                      onChange={e => setOwnerEmail(e.target.value)}
+                      placeholder="dona@gmail.com"
+                      className="w-full bg-background/50 border border-primary/10 focus:border-primary/40 p-3.5 rounded-xl outline-none transition-all text-foreground text-sm placeholder:text-muted-foreground/40"
+                    />
+                  </div>
+                  
+                  <button
+                    onClick={handleProvisionCalendar}
+                    disabled={!studioName || !ownerEmail || isProvisioning}
+                    className="w-full py-4 bg-primary text-primary-foreground font-bold rounded-xl transition-all hover:shadow-[0_0_25px_-5px_rgba(251,191,36,0.3)] hover:scale-[1.02] active:scale-[0.98] disabled:opacity-30 disabled:hover:shadow-none disabled:hover:scale-100 flex items-center justify-center gap-2"
+                  >
+                    {isProvisioning ? 'Criando Agenda...' : 'Enviar Convite Oficial'}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
