@@ -27,9 +27,9 @@ export interface Booking {
 }
 
 export const SERVICES: Service[] = [
-  { name: 'Alongamento Molde F1', time: 180, price: 155, image: 'https://i.imgur.com/VQWp5Bu.jpeg', category: 'Unhas' },
-  { name: 'Manutenção Alongamento', time: 150, price: 115, image: 'https://i.imgur.com/O2bwT3H.jpeg', category: 'Unhas' },
-  { name: 'Banho de Gel', time: 120, price: 90, image: 'https://i.imgur.com/lA6WWaC.jpeg', category: 'Unhas' },
+  { name: 'Alongamento Molde F1', time: 180, price: 170, image: 'https://i.imgur.com/VQWp5Bu.jpeg', category: 'Unhas' },
+  { name: 'Manutenção Alongamento', time: 150, price: 120, image: 'https://i.imgur.com/O2bwT3H.jpeg', category: 'Unhas' },
+  { name: 'Banho de Gel', time: 120, price: 100, image: 'https://i.imgur.com/lA6WWaC.jpeg', category: 'Unhas' },
   { name: 'Esmaltação em Gel', time: 120, price: 70, image: 'https://i.imgur.com/0C4YNsq.jpeg', category: 'Unhas' },
 ];
 

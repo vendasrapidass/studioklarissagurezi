@@ -68,10 +68,10 @@ function parseDateTimeToSaoPaulo(isoString: string) {
 
 function getServicePrice(service: string): number {
   const cleanSvc = service.toLowerCase().trim();
-  if (cleanSvc.includes('alongamento molde f1')) return 155;
-  if (cleanSvc.includes('alongamento')) return 155;
-  if (cleanSvc.includes('manutenção') || cleanSvc.includes('manutencao')) return 115;
-  if (cleanSvc.includes('banho de gel')) return 90;
+  if (cleanSvc.includes('alongamento molde f1')) return 170;
+  if (cleanSvc.includes('alongamento')) return 170;
+  if (cleanSvc.includes('manutenção') || cleanSvc.includes('manutencao')) return 120;
+  if (cleanSvc.includes('banho de gel')) return 100;
   if (cleanSvc.includes('esmaltação') || cleanSvc.includes('esmaltacao')) return 70;
   return 0;
 }

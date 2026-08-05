@@ -28,7 +28,7 @@ const NailArtSection = () => {
 
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/5 border border-primary/10 text-xs text-primary/80 font-medium">
               <HelpCircle className="w-3.5 h-3.5 text-primary/60" />
-              Adicional de R$ 5,00 a R$ 20,00 (avaliação no atendimento)
+              Adicional de R$ 10,00 a R$ 50,00 (avaliação no atendimento)
             </div>
           </div>
 
