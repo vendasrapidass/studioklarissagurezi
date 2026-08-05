@@ -27,18 +27,18 @@ export interface Booking {
 }
 
 export const SERVICES: Service[] = [
-  { name: 'Alongamento Molde F1', time: 180, price: 170, image: 'https://i.imgur.com/VQWp5Bu.jpeg', category: 'Unhas' },
-  { name: 'Manutenção Alongamento', time: 150, price: 120, image: 'https://i.imgur.com/O2bwT3H.jpeg', category: 'Unhas' },
-  { name: 'Banho de Gel', time: 120, price: 100, image: 'https://i.imgur.com/lA6WWaC.jpeg', category: 'Unhas' },
-  { name: 'Esmaltação em Gel', time: 120, price: 70, image: 'https://i.imgur.com/0C4YNsq.jpeg', category: 'Unhas' },
+  { name: 'Alongamento Molde F1', time: 180, price: 170, image: 'https://i.imgur.com/VQWp5Bul.jpeg', category: 'Unhas' },
+  { name: 'Manutenção Alongamento', time: 150, price: 120, image: 'https://i.imgur.com/O2bwT3Hl.jpeg', category: 'Unhas' },
+  { name: 'Banho de Gel', time: 120, price: 100, image: 'https://i.imgur.com/lA6WWaCl.jpeg', category: 'Unhas' },
+  { name: 'Esmaltação em Gel', time: 120, price: 70, image: 'https://i.imgur.com/0C4YNsql.jpeg', category: 'Unhas' },
 ];
 
 export const GALLERY_IMAGES = [
-  'https://i.imgur.com/qPlp82K.jpeg',
-  'https://i.imgur.com/ZnqvpSs.jpeg',
-  'https://i.imgur.com/6TxVITZ.jpeg',
-  'https://i.imgur.com/VfrvuDC.jpeg',
-  'https://i.imgur.com/IbTCZe2.jpeg'
+  'https://i.imgur.com/qPlp82Kh.jpeg',
+  'https://i.imgur.com/ZnqvpSsh.jpeg',
+  'https://i.imgur.com/6TxVITZh.jpeg',
+  'https://i.imgur.com/VfrvuDCh.jpeg',
+  'https://i.imgur.com/IbTCZe2h.jpeg'
 ];
 
 export const WHATSAPP_NUMBER = '5541997114154';

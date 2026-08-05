@@ -17,7 +17,7 @@ const HeroSection = () => {
   return (
     <section className="relative h-screen w-full flex items-center justify-center overflow-hidden">
       <img
-        src="https://i.imgur.com/o64yc3d.jpeg"
+        src="https://i.imgur.com/o64yc3dh.jpeg"
         alt="STUDIO KLARISSA GUAREZI"
         className="absolute inset-0 w-full h-full object-cover opacity-30"
         loading="eager"

@@ -50,7 +50,7 @@ const NailArtSection = () => {
               className="w-[95px] md:w-[140px] h-[133px] md:h-[196px] rounded-xl overflow-hidden shadow-lg border border-border/40 z-10 cursor-pointer -rotate-12 -translate-y-1 transform transition-transform"
             >
               <img
-                src="https://i.imgur.com/CR94qjt.jpeg"
+                src="https://i.imgur.com/CR94qjtl.jpeg"
                 alt="Nail Art Lateral Esquerda"
                 className="w-full h-full object-cover"
                 loading="lazy"
@@ -63,7 +63,7 @@ const NailArtSection = () => {
               className="w-[95px] md:w-[140px] h-[133px] md:h-[196px] rounded-xl overflow-hidden shadow-2xl border-2 border-primary/20 z-20 cursor-pointer scale-105"
             >
               <img
-                src="https://i.imgur.com/lpX5tR8.jpeg"
+                src="https://i.imgur.com/lpX5tR8l.jpeg"
                 alt="Nail Art Centro Destaque"
                 className="w-full h-full object-cover"
                 loading="lazy"
@@ -76,7 +76,7 @@ const NailArtSection = () => {
               className="w-[95px] md:w-[140px] h-[133px] md:h-[196px] rounded-xl overflow-hidden shadow-lg border border-border/40 z-10 cursor-pointer rotate-12 -translate-y-1 transform transition-transform"
             >
               <img
-                src="https://i.imgur.com/hIpYOER.jpeg"
+                src="https://i.imgur.com/hIpYOERl.jpeg"
                 alt="Nail Art Lateral Direita"
                 className="w-full h-full object-cover"
                 loading="lazy"
