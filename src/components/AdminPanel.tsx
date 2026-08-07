@@ -57,6 +57,20 @@ const AdminPanel = () => {
   const [isAddingManual, setIsAddingManual] = useState(false);
   const [manualError, setManualError] = useState('');
 
+  // Detects if the typed manual date is in the past (for auto-completing as 'done')
+  const manualIsPast = (() => {
+    if (!manualDate || manualDate.length < 10) return false;
+    try {
+      const parts = manualDate.split('/');
+      if (parts.length < 3) return false;
+      const [d, m, y] = parts.map(Number);
+      if (isNaN(d) || isNaN(m) || isNaN(y)) return false;
+      const bookingDate = new Date(y, m - 1, d);
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      return bookingDate < today;
+    } catch { return false; }
+  })();
+
   // Schedule block state
   const [addMode, setAddMode] = useState<'booking' | 'block'>('booking');
   const [blockDate, setBlockDate] = useState('');
@@ -298,6 +312,18 @@ const AdminPanel = () => {
 
     setIsAddingManual(true);
 
+    // Determine if the date is in the past → save directly as completed (counts in revenue)
+    const isPast = (() => {
+      try {
+        const parts = manualDate.split('/');
+        if (parts.length < 3) return false;
+        const [d, m, y] = parts.map(Number);
+        const bookingDate = new Date(y, m - 1, d);
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        return bookingDate < today;
+      } catch { return false; }
+    })();
+
     const booking: Booking = {
       id: generateUUID(),
       service: manualService.trim(),
@@ -306,14 +332,24 @@ const AdminPanel = () => {
       time: manualTime,
       name: manualName.trim(),
       phone: manualPhone.replace(/\D/g, ''),
-      status: 'accepted',
+      status: isPast ? 'completed' : 'accepted',
     };
 
-    try { addBooking(booking); } catch (e) { console.error('Local store error:', e); }
+    try {
+      if (isPast) {
+        // Past date → goes straight to completed list → shows in dashboard revenue
+        addCompleted(booking);
+        setCompleted(getCompleted());
+      } else {
+        // Future date → goes to active bookings list
+        addBooking(booking);
+      }
+    } catch (e) { console.error('Local store error:', e); }
 
     const svc = SERVICES.find(s => s.name === manualService);
     const duration = svc ? svc.time : 180;
 
+    // Sync to Google Calendar (best effort, non-blocking)
     fetch('/api/calendar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -327,8 +363,8 @@ const AdminPanel = () => {
         setManualPhone(''); setManualDate(''); setManualTime('');
         setManualError('');
         setShowSuccess(true);
-        setTab('bookings');
-        setTimeout(() => setShowSuccess(false), 2500);
+        setTab(isPast ? 'dashboard' : 'bookings');
+        setTimeout(() => setShowSuccess(false), 3000);
       });
   };
 
@@ -861,8 +897,18 @@ const AdminPanel = () => {
                         onChange={e => setManualDate(maskDate(e.target.value))}
                         placeholder="07/08/2026"
                         maxLength={10}
-                        className="w-full bg-background/50 border border-primary/10 focus:border-primary/40 p-3.5 rounded-xl outline-none transition-all text-foreground text-sm placeholder:text-muted-foreground/40"
+                        className={`w-full bg-background/50 border focus:border-primary/40 p-3.5 rounded-xl outline-none transition-all text-foreground text-sm placeholder:text-muted-foreground/40 ${manualDate.length === 10 ? (manualIsPast ? 'border-emerald-500/40' : 'border-primary/30') : 'border-primary/10'}`}
                       />
+                      {/* Smart status badge — appears once the date is complete */}
+                      {manualDate.length === 10 && (
+                        <div className={`mt-2 flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-lg ${manualIsPast ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-primary/10 text-primary border border-primary/20'}`}>
+                          {manualIsPast ? (
+                            <><Check className="w-3.5 h-3.5 flex-shrink-0" /> Data no passado — será lançado direto no <span className="underline">Faturamento</span> do Dashboard ✅</>
+                          ) : (
+                            <><CalendarDays className="w-3.5 h-3.5 flex-shrink-0" /> Data futura — será adicionado à lista de <span className="underline">Agendamentos</span></>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {manualError && (
@@ -875,10 +921,12 @@ const AdminPanel = () => {
                       type="button"
                       onClick={handleAddManualService}
                       disabled={isAddingManual}
-                      className="w-full py-4 bg-primary text-primary-foreground font-bold rounded-xl transition-all hover:shadow-[0_0_25px_-5px_hsl(6_48%_68%/0.5)] hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      className={`w-full py-4 font-bold rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${manualIsPast ? 'bg-emerald-600 hover:bg-emerald-500 text-white hover:shadow-[0_0_25px_-5px_rgba(52,211,153,0.4)]' : 'bg-primary text-primary-foreground hover:shadow-[0_0_25px_-5px_hsl(6_48%_68%/0.5)]'}`}
                     >
                       {isAddingManual ? (
-                        <><div className="w-4 h-4 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin" />Salvando...</>
+                        <><div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />Salvando...</>
+                      ) : manualIsPast ? (
+                        <><Check className="w-5 h-5" /> Registrar no Faturamento</>
                       ) : (
                         <><Plus className="w-5 h-5" /> Adicionar aos Agendamentos</>
                       )}
