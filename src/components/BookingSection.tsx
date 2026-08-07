@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { SERVICES, isDayAllowed, getTimesForDate, WHATSAPP_NUMBER, generateWhatsAppUrl, formatPhone, getBookingDuration, ScheduleBlock } from '@/lib/types';
+import { SERVICES, isDayAllowed, getTimesForDate, WHATSAPP_NUMBER, generateWhatsAppUrl, formatPhone, getBookingDuration, ScheduleBlock, generateUUID } from '@/lib/types';
 import { addBooking, getBookings, getBlocks } from '@/lib/bookingStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Calendar } from '@/components/ui/calendar';
@@ -209,7 +209,7 @@ const BookingSection = () => {
 
     const dateStr = format(selectedDate, 'dd/MM/yyyy');
     const booking = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       service: combinedServiceName,
       price: totalPrice,
       date: dateStr,

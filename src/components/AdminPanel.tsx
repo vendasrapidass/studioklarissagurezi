@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Booking, SERVICES, generateWhatsAppUrl, formatPhone, ScheduleBlock } from '@/lib/types';
+import { Booking, SERVICES, generateWhatsAppUrl, formatPhone, ScheduleBlock, generateUUID } from '@/lib/types';
 import { getBookings, saveBookings, getCompleted, saveCompleted, addCompleted, removeCompleted, addBooking, getBlocks, saveBlocks, addBlock, removeBlock } from '@/lib/bookingStore';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -389,7 +389,7 @@ const AdminPanel = () => {
     }
 
     const booking: Booking = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       service: manualService,
       price: Number(manualPrice),
       date: manualDate,
@@ -448,7 +448,7 @@ const AdminPanel = () => {
     }
 
     const block: ScheduleBlock = {
-      id: crypto.randomUUID(),
+      id: generateUUID(),
       date: blockDate,
       allDay: blockAllDay,
       start: blockAllDay ? undefined : blockStart,
@@ -564,7 +564,7 @@ const AdminPanel = () => {
         const timestamp = new Date(y, m - 1, d, hour, min).getTime() || 0;
         agendaItems.push({ type: 'booking', id: b.id, timestamp, raw: b });
       } catch (err) {
-        agendaItems.push({ type: 'booking', id: b.id || crypto.randomUUID(), timestamp: 0, raw: b });
+        agendaItems.push({ type: 'booking', id: b.id || generateUUID(), timestamp: 0, raw: b });
       }
     });
 
@@ -590,7 +590,7 @@ const AdminPanel = () => {
           const timestamp = new Date(y, m - 1, d, hour, min).getTime() || 0;
           agendaItems.push({ type: 'block', id: bl.id, timestamp, raw: bl });
         } catch (err) {
-          agendaItems.push({ type: 'block', id: bl.id || crypto.randomUUID(), timestamp: 0, raw: bl });
+          agendaItems.push({ type: 'block', id: bl.id || generateUUID(), timestamp: 0, raw: bl });
         }
       });
     }
