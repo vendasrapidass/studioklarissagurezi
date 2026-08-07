@@ -335,27 +335,35 @@ const AdminPanel = () => {
       status: isPast ? 'completed' : 'accepted',
     };
 
+    // ── Update local state immediately (no waiting for API) ──────────────────
+    // This prevents a race condition where reload() from the POST .then() would
+    // call GET /api/calendar before Google Calendar has synced, overwriting local
+    // state and making the new booking disappear from the list.
     try {
       if (isPast) {
-        // Past date → goes straight to completed list → shows in dashboard revenue
         addCompleted(booking);
-        setCompleted(getCompleted());
+        // Update React state directly — the booking appears instantly in Dashboard
+        setCompleted(prev => [...prev, { ...booking, status: 'completed' }]);
       } else {
-        // Future date → goes to active bookings list
         addBooking(booking);
+        // Update React state directly — the booking appears instantly in "Todos"
+        setBookings(prev => [...prev, booking]);
       }
     } catch (e) { console.error('Local store error:', e); }
 
+    // ── Sync to Google Calendar in background (non-blocking) ─────────────────
+    // NOTE: We do NOT call reload() here on success — doing so would trigger a
+    // GET to the API which might return stale data (Google Calendar sync lag)
+    // and overwrite the booking we just added. The booking is already in the
+    // local state and localStorage; the next natural reload() will pick it up.
     const svc = SERVICES.find(s => s.name === manualService);
     const duration = svc ? svc.time : 180;
 
-    // Sync to Google Calendar (best effort, non-blocking)
     fetch('/api/calendar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'booking', booking, duration }),
     })
-      .then(r => { if (!r.ok) throw new Error('API error'); reload(); })
       .catch(e => console.error('Manual booking calendar sync error:', e))
       .finally(() => {
         setIsAddingManual(false);
