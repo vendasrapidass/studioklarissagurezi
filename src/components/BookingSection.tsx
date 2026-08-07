@@ -80,7 +80,10 @@ const BookingSection = () => {
       });
 
       const timeToMinutes = (t: string) => {
-        const [h, m] = t.split(':').map(Number);
+        if (!t || typeof t !== 'string') return 0;
+        const parts = t.split(':');
+        if (parts.length < 2) return 0;
+        const [h, m] = parts.map(Number);
         return h * 60 + m;
       };
 
@@ -129,8 +132,9 @@ const BookingSection = () => {
 
         // Check overlap with any booking of the day
         const hasOverlap = bookings.some((b) => {
+          if (!b || !b.time) return false;
           const bStart = timeToMinutes(b.time);
-          const bDuration = getBookingDuration(b.service);
+          const bDuration = getBookingDuration(b.service || '');
           const bEnd = bStart + bDuration;
 
           return Math.max(start, bStart) < Math.min(end, bEnd);

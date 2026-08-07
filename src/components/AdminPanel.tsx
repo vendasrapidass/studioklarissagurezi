@@ -297,12 +297,19 @@ const AdminPanel = () => {
 
   // Start editing active booking
   const startEditBooking = (b: Booking) => {
+    if (!b) return;
     setEditingBooking(b);
-    const [d, m, y] = b.date.split('/');
-    setEditBookingDate(`${y}-${m}-${d}`);
-    setEditBookingTime(b.time);
-    setEditBookingService(b.service);
-    setEditBookingPrice(b.price);
+    const dateStr = b.date || '';
+    const parts = dateStr.split('/');
+    if (parts.length >= 3) {
+      const [d, m, y] = parts;
+      setEditBookingDate(`${y}-${m}-${d}`);
+    } else {
+      setEditBookingDate('');
+    }
+    setEditBookingTime(b.time || '');
+    setEditBookingService(b.service || '');
+    setEditBookingPrice(b.price || 0);
   };
 
   // Handle service change with dynamic price update
@@ -321,7 +328,12 @@ const AdminPanel = () => {
 
     setIsSavingEdit(true);
 
-    const [y, m, d] = editBookingDate.split('-');
+    const parts = (editBookingDate || '').split('-');
+    if (parts.length < 3) {
+      setIsSavingEdit(false);
+      return;
+    }
+    const [y, m, d] = parts;
     const formattedDate = `${d}/${m}/${y}`;
 
     const updatedBooking: Booking = {
@@ -504,7 +516,11 @@ const AdminPanel = () => {
   const filteredCompleted = useMemo(() => {
     const now = new Date();
     return completed.filter(b => {
-      const [d, m, y] = b.date.split('/').map(Number);
+      if (!b || !b.date || typeof b.date !== 'string') return false;
+      const parts = b.date.split('/');
+      if (parts.length < 3) return false;
+      const [d, m, y] = parts.map(Number);
+      if (isNaN(d) || isNaN(m) || isNaN(y)) return false;
       const date = new Date(y, m - 1, d);
       switch (filter) {
         case 'today': return date.toDateString() === now.toDateString();
@@ -516,11 +532,11 @@ const AdminPanel = () => {
     });
   }, [completed, filter]);
 
-  const totalRevenue = filteredCompleted.reduce((sum, b) => sum + b.price, 0);
+  const totalRevenue = filteredCompleted.reduce((sum, b) => sum + (b.price || 0), 0);
   const totalServices = filteredCompleted.length;
 
-  const pendingCount = bookings.filter(b => b.status === 'pending').length;
-  const acceptedCount = bookings.filter(b => b.status === 'accepted').length;
+  const pendingCount = bookings.filter(b => b && b.status === 'pending').length;
+  const acceptedCount = bookings.filter(b => b && b.status === 'accepted').length;
 
   const unifiedAgenda = useMemo(() => {
     const agendaItems: Array<
@@ -532,34 +548,49 @@ const AdminPanel = () => {
     const listBookings = subFilter === 'completed' ? completed : bookings;
 
     listBookings.forEach(b => {
+      if (!b) return;
       if (subFilter !== 'all' && subFilter !== 'completed' && b.status !== subFilter) {
         return;
       }
       try {
-        const [d, m, y] = b.date.split('/').map(Number);
-        const [hour, min] = (b.time || '00:00').split(':').map(Number);
+        if (!b.date || typeof b.date !== 'string') throw new Error("Missing date");
+        const parts = b.date.split('/');
+        if (parts.length < 3) throw new Error("Invalid date format");
+        const [d, m, y] = parts.map(Number);
+        
+        const timeParts = (b.time || '00:00').split(':');
+        const [hour, min] = timeParts.length >= 2 ? timeParts.map(Number) : [0, 0];
+        
         const timestamp = new Date(y, m - 1, d, hour, min).getTime() || 0;
         agendaItems.push({ type: 'booking', id: b.id, timestamp, raw: b });
       } catch (err) {
-        agendaItems.push({ type: 'booking', id: b.id, timestamp: 0, raw: b });
+        agendaItems.push({ type: 'booking', id: b.id || crypto.randomUUID(), timestamp: 0, raw: b });
       }
     });
 
     if (subFilter === 'all' || subFilter === 'blocks') {
       blocks.forEach(bl => {
+        if (!bl) return;
         try {
-          const [d, m, y] = bl.date.split('/').map(Number);
+          if (!bl.date || typeof bl.date !== 'string') throw new Error("Missing block date");
+          const parts = bl.date.split('/');
+          if (parts.length < 3) throw new Error("Invalid block date format");
+          const [d, m, y] = parts.map(Number);
+          
           let hour = 0;
           let min = 0;
           if (!bl.allDay && bl.start) {
-            const [h, mi] = bl.start.split(':').map(Number);
-            hour = h;
-            min = mi;
+            const startParts = bl.start.split(':');
+            if (startParts.length >= 2) {
+              const [h, mi] = startParts.map(Number);
+              hour = h;
+              min = mi;
+            }
           }
           const timestamp = new Date(y, m - 1, d, hour, min).getTime() || 0;
           agendaItems.push({ type: 'block', id: bl.id, timestamp, raw: bl });
         } catch (err) {
-          agendaItems.push({ type: 'block', id: bl.id, timestamp: 0, raw: bl });
+          agendaItems.push({ type: 'block', id: bl.id || crypto.randomUUID(), timestamp: 0, raw: bl });
         }
       });
     }
@@ -579,6 +610,7 @@ const AdminPanel = () => {
     if (searchTerm.trim() !== '') {
       const cleanSearch = searchTerm.toLowerCase().trim();
       items = items.filter(item => {
+        if (!item || !item.raw) return false;
         if (item.type === 'booking') {
           const b = item.raw;
           return (b.name || '').toLowerCase().includes(cleanSearch) ||
@@ -594,9 +626,12 @@ const AdminPanel = () => {
 
     // Filter by date (convert YYYY-MM-DD -> DD/MM/YYYY)
     if (filterDate) {
-      const [y, m, d] = filterDate.split('-');
-      const formattedDate = `${d}/${m}/${y}`;
-      items = items.filter(item => item.raw.date === formattedDate);
+      const parts = filterDate.split('-');
+      if (parts.length >= 3) {
+        const [y, m, d] = parts;
+        const formattedDate = `${d}/${m}/${y}`;
+        items = items.filter(item => item.raw && item.raw.date === formattedDate);
+      }
     }
 
     return items;
@@ -720,7 +755,9 @@ const AdminPanel = () => {
                   {filterDate ? (
                     <span className="text-[10px] font-mono text-primary font-bold pointer-events-none">
                       {(() => {
-                        const [y, m, d] = filterDate.split('-');
+                        const parts = (filterDate || '').split('-');
+                        if (parts.length < 3) return filterDate;
+                        const [y, m, d] = parts;
                         return `${d}/${m}`;
                       })()}
                     </span>
@@ -752,6 +789,7 @@ const AdminPanel = () => {
               )}
 
               {filteredAgenda.map(item => {
+                if (!item || !item.raw) return null;
                 if (item.type === 'booking') {
                   const a = item.raw;
                   return (
