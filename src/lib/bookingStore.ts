@@ -4,12 +4,20 @@ const BOOKINGS_KEY = 'classea_bookings';
 const COMPLETED_KEY = 'classea_completed';
 const BLOCKS_KEY = 'studiogaby_blocks';
 
+// Safe localStorage wrappers — prevent crashes in restricted webviews (e.g. Instagram browser)
+function lsGet(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function lsSet(key: string, value: string): void {
+  try { localStorage.setItem(key, value); } catch { /* noop */ }
+}
+
 export function getBlocks(): ScheduleBlock[] {
-  return JSON.parse(localStorage.getItem(BLOCKS_KEY) || '[]');
+  try { return JSON.parse(lsGet(BLOCKS_KEY) || '[]'); } catch { return []; }
 }
 
 export function saveBlocks(blocks: ScheduleBlock[]): void {
-  localStorage.setItem(BLOCKS_KEY, JSON.stringify(blocks));
+  lsSet(BLOCKS_KEY, JSON.stringify(blocks));
 }
 
 export function addBlock(block: ScheduleBlock): void {
@@ -19,16 +27,15 @@ export function addBlock(block: ScheduleBlock): void {
 }
 
 export function removeBlock(id: string): void {
-  const blocks = getBlocks().filter(b => b.id !== id);
-  saveBlocks(blocks);
+  saveBlocks(getBlocks().filter(b => b.id !== id));
 }
 
 export function getBookings(): Booking[] {
-  return JSON.parse(localStorage.getItem(BOOKINGS_KEY) || '[]');
+  try { return JSON.parse(lsGet(BOOKINGS_KEY) || '[]'); } catch { return []; }
 }
 
 export function saveBookings(bookings: Booking[]): void {
-  localStorage.setItem(BOOKINGS_KEY, JSON.stringify(bookings));
+  lsSet(BOOKINGS_KEY, JSON.stringify(bookings));
 }
 
 export function addBooking(booking: Booking): void {
@@ -38,16 +45,15 @@ export function addBooking(booking: Booking): void {
 }
 
 export function removeBooking(id: string): void {
-  const bookings = getBookings().filter(b => b.id !== id);
-  saveBookings(bookings);
+  saveBookings(getBookings().filter(b => b.id !== id));
 }
 
 export function getCompleted(): Booking[] {
-  return JSON.parse(localStorage.getItem(COMPLETED_KEY) || '[]');
+  try { return JSON.parse(lsGet(COMPLETED_KEY) || '[]'); } catch { return []; }
 }
 
 export function saveCompleted(completed: Booking[]): void {
-  localStorage.setItem(COMPLETED_KEY, JSON.stringify(completed));
+  lsSet(COMPLETED_KEY, JSON.stringify(completed));
 }
 
 export function addCompleted(booking: Booking): void {
