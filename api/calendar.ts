@@ -410,33 +410,37 @@ export default async function handler(req: any, res: any) {
 
         if (insertErr) throw insertErr;
 
-        // 2. Criar evento no Google Calendar para espelhamento
-        const title = `${booking.service} - ${booking.name}`;
-        const description = `Cliente: ${booking.name}\nContato: ${booking.phone}\nValor: R$ ${booking.price},00`;
+        // 2. Criar evento no Google Calendar para espelhamento (opcional/best-effort)
+        try {
+          const title = `${booking.service} - ${booking.name}`;
+          const description = `Cliente: ${booking.name}\nContato: ${booking.phone}\nValor: R$ ${booking.price},00`;
 
-        await calendar.events.insert({
-          calendarId: activeCalendarId,
-          requestBody: {
-            id: eventId,
-            summary: title,
-            description,
-            start: { dateTime: startDateTime, timeZone: 'America/Sao_Paulo' },
-            end: { dateTime: new Date(endMs).toISOString(), timeZone: 'America/Sao_Paulo' },
-            extendedProperties: {
-              shared: {
-                id,
-                type: 'booking',
-                service: booking.service,
-                name: booking.name,
-                phone: booking.phone,
-                price: String(booking.price),
-                status: booking.status,
-                date: booking.date,
-                time: booking.time,
+          await calendar.events.insert({
+            calendarId: activeCalendarId,
+            requestBody: {
+              id: eventId,
+              summary: title,
+              description,
+              start: { dateTime: startDateTime, timeZone: 'America/Sao_Paulo' },
+              end: { dateTime: new Date(endMs).toISOString(), timeZone: 'America/Sao_Paulo' },
+              extendedProperties: {
+                shared: {
+                  id,
+                  type: 'booking',
+                  service: booking.service,
+                  name: booking.name,
+                  phone: booking.phone,
+                  price: String(booking.price),
+                  status: booking.status,
+                  date: booking.date,
+                  time: booking.time,
+                },
               },
             },
-          },
-        });
+          });
+        } catch (gcalErr) {
+          console.error("Error writing booking to Google Calendar:", gcalErr);
+        }
 
         return res.status(201).json({ success: true, eventId });
       }
@@ -478,44 +482,48 @@ export default async function handler(req: any, res: any) {
 
         if (insertErr) throw insertErr;
 
-        // 2. Criar no Google Calendar
-        const title = `Bloqueio - ${block.reason || 'Indisponível'}`;
-        let start: any;
-        let end: any;
+        // 2. Criar no Google Calendar (opcional/best-effort)
+        try {
+          const title = `Bloqueio - ${block.reason || 'Indisponível'}`;
+          let start: any;
+          let end: any;
 
-        if (block.allDay) {
-          start = { date: isoDate };
-          const dateObj = new Date(Number(y), Number(m) - 1, Number(d));
-          dateObj.setDate(dateObj.getDate() + 1);
-          const pad = (n: number) => String(n).padStart(2, '0');
-          const nextDayStr = `${dateObj.getFullYear()}-${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())}`;
-          end = { date: nextDayStr };
-        } else {
-          start = { dateTime: startDateTime, timeZone: 'America/Sao_Paulo' };
-          end = { dateTime: endDateTime, timeZone: 'America/Sao_Paulo' };
-        }
+          if (block.allDay) {
+            start = { date: isoDate };
+            const dateObj = new Date(Number(y), Number(m) - 1, Number(d));
+            dateObj.setDate(dateObj.getDate() + 1);
+            const pad = (n: number) => String(n).padStart(2, '0');
+            const nextDayStr = `${dateObj.getFullYear()}-${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())}`;
+            end = { date: nextDayStr };
+          } else {
+            start = { dateTime: startDateTime, timeZone: 'America/Sao_Paulo' };
+            end = { dateTime: endDateTime, timeZone: 'America/Sao_Paulo' };
+          }
 
-        await calendar.events.insert({
-          calendarId: activeCalendarId,
-          requestBody: {
-            id: eventId,
-            summary: title,
-            description: `Bloqueio de Agenda\nMotivo: ${block.reason}`,
-            start,
-            end,
-            extendedProperties: {
-              shared: {
-                id,
-                type: 'block',
-                reason: block.reason,
-                date: block.date,
-                allDay: String(block.allDay),
-                start: block.start || '',
-                end: block.end || '',
+          await calendar.events.insert({
+            calendarId: activeCalendarId,
+            requestBody: {
+              id: eventId,
+              summary: title,
+              description: `Bloqueio de Agenda\nMotivo: ${block.reason}`,
+              start,
+              end,
+              extendedProperties: {
+                shared: {
+                  id,
+                  type: 'block',
+                  reason: block.reason,
+                  date: block.date,
+                  allDay: String(block.allDay),
+                  start: block.start || '',
+                  end: block.end || '',
+                },
               },
             },
-          },
-        });
+          });
+        } catch (gcalErr) {
+          console.error("Error writing block to Google Calendar:", gcalErr);
+        }
 
         return res.status(201).json({ success: true, eventId });
       }

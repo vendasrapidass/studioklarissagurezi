@@ -1105,10 +1105,16 @@ const AdminPanel = () => {
 
                     <button
                       onClick={handleAddManualService}
-                      disabled={!manualService || !manualPrice || !manualName || !manualDate || !manualTime}
+                      disabled={!manualService || !manualPrice || !manualName || !manualDate || !manualTime || isAddingManual}
                       className="w-full py-4 bg-primary text-primary-foreground font-bold rounded-xl transition-all hover:shadow-[0_0_25px_-5px_hsl(6_48%_68%/0.5)] hover:scale-[1.02] active:scale-[0.98] disabled:opacity-30 disabled:hover:shadow-none disabled:hover:scale-100 flex items-center justify-center gap-2"
                     >
-                      <Plus className="w-5 h-5" /> Adicionar aos Agendamentos
+                      {isAddingManual ? (
+                        "Salvando..."
+                      ) : (
+                        <>
+                          <Plus className="w-5 h-5" /> Adicionar aos Agendamentos
+                        </>
+                      )}
                     </button>
                   </div>
                 ) : (
@@ -1182,10 +1188,10 @@ const AdminPanel = () => {
 
                     <button
                       onClick={handleSaveBlock}
-                      disabled={!blockDate || (!blockAllDay && (!blockStart || !blockEnd))}
+                      disabled={!blockDate || (!blockAllDay && (!blockStart || !blockEnd)) || isAddingBlock}
                       className="w-full py-4 bg-primary text-primary-foreground font-bold rounded-xl transition-all hover:shadow-[0_0_25px_-5px_hsl(6_48%_68%/0.5)] hover:scale-[1.02] active:scale-[0.98] disabled:opacity-30 disabled:hover:shadow-none disabled:hover:scale-100 flex items-center justify-center gap-2"
                     >
-                      Salvar Bloqueio
+                      {isAddingBlock ? "Salvando..." : "Salvar Bloqueio"}
                     </button>
                   </div>
                 )}
