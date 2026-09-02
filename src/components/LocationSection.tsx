@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import fachada from '@/assets/fachada.jpg';
+
 
 const LocationSection = () => {
   const handleDirections = () => {
@@ -44,12 +44,7 @@ const LocationSection = () => {
           📍 Ir até o Studio
         </button>
 
-        <img
-          src={fachada}
-          alt="Fachada do Studio"
-          className="w-full h-48 md:h-64 object-cover rounded-2xl"
-          loading="lazy"
-        />
+
 
         <div className="text-center">
           <p className="font-bold text-lg">Comercial Advance</p>
