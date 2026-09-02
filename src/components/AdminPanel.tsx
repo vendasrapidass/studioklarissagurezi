@@ -189,7 +189,7 @@ const AdminPanel = () => {
 
   const handleAccept = (booking: Booking) => {
     if (!booking) return;
-    const msg = `✨ *STUDIO KLARISSA GUAREZI* ✨\n\nOlá *${booking.name}*! 👋\n\nSeu agendamento foi *CONFIRMADO* com sucesso! ✅\n\n📋 *Serviço:* ${booking.service}\n💰 *Valor:* R$ ${booking.price},00\n📅 *Data:* ${booking.date}\n🕐 *Horário:* ${booking.time}\n\n📍 *Endereço:* Edifício Ilha de Manhattan - Av. Vereador Arlindo Chemin, nº 50, Sala 102 (Piso 1, à esquerda) - Centro, Campo Largo - PR\n\nEstamos te esperando! 🌸\nAté lá! 🤝`;
+    const msg = `✨ *STUDIO KLARISSA GUAREZI* ✨\n\nOlá *${booking.name}*! 👋\n\nSeu agendamento foi *CONFIRMADO* com sucesso! ✅\n\n📋 *Serviço:* ${booking.service}\n💰 *Valor:* R$ ${booking.price},00\n📅 *Data:* ${booking.date}\n🕐 *Horário:* ${booking.time}\n\n📍 *Endereço:* Rua Marechal Deodoro, 636 - Sala 105, Comercial Advance (Lotérica Jacaré) - Centro, Campo Largo - PR\n\nEstamos te esperando! 🌸\nAté lá! 🤝`;
     if (booking.phone) { try { window.open(generateWhatsAppUrl(booking.phone, msg), '_blank'); } catch (e) { /* noop */ } }
     const updated = bookings.map(b => b.id === booking.id ? { ...booking, status: 'accepted' as const } : b);
     saveBookings(updated); setBookings(updated);

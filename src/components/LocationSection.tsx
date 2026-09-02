@@ -3,7 +3,7 @@ import fachada from '@/assets/fachada.jpg';
 
 const LocationSection = () => {
   const handleDirections = () => {
-    window.open('https://www.google.com/maps/dir/?api=1&destination=Edificio+Ilha+de+Manhattan+Av.+Vereador+Arlindo+Chemin+50+Centro+Campo+Largo+PR', '_blank');
+    window.open('https://www.google.com/maps/dir/?api=1&destination=Rua+Marechal+Deodoro+636+Centro+Campo+Largo+PR', '_blank');
   };
 
   return (
@@ -27,7 +27,7 @@ const LocationSection = () => {
       >
         <div className="h-64 md:h-80 rounded-2xl overflow-hidden">
           <iframe
-            src="https://maps.google.com/maps?q=Av.%20Vereador%20Arlindo%20Chemin,%2050%20-%20Centro,%20Campo%20Largo%20-%20PR&t=&z=16&ie=UTF8&iwloc=&output=embed"
+            src="https://maps.google.com/maps?q=Rua%20Marechal%20Deodoro,%20636%20-%20Centro,%20Campo%20Largo%20-%20PR&t=&z=16&ie=UTF8&iwloc=&output=embed"
             width="100%"
             height="100%"
             style={{ border: 0 }}
@@ -52,8 +52,8 @@ const LocationSection = () => {
         />
 
         <div className="text-center">
-          <p className="font-bold text-lg">Edifício Ilha de Manhattan</p>
-          <p className="text-sm text-muted-foreground">Av. Vereador Arlindo Chemin, nº 50 • Sala 102 – Piso 1, à esquerda.<br/>Centro, Campo Largo - PR</p>
+          <p className="font-bold text-lg">Comercial Advance</p>
+          <p className="text-sm text-muted-foreground">Rua Marechal Deodoro, 636 • Sala 105 (Lotérica Jacaré)<br/>Centro, Campo Largo - PR</p>
         </div>
       </motion.div>
     </section>
