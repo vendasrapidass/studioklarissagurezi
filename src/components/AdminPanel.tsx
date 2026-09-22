@@ -439,7 +439,7 @@ const AdminPanel = () => {
     });
   }, [completed, filter]);
 
-  const totalRevenue = filteredCompleted.reduce((sum, b) => sum + (b.price || 0), 0);
+  const totalRevenue = filteredCompleted.reduce((sum, b) => sum + (Number(b.price) || 0), 0);
   const totalServices = filteredCompleted.length;
   const pendingCount = bookings.filter(b => b && b.status === 'pending').length;
   const acceptedCount = bookings.filter(b => b && b.status === 'accepted').length;
