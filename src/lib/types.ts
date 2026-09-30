@@ -65,8 +65,8 @@ export function getTimesForDate(date: Date): string[] {
     // Sábados: 10:00, 12:30 e 14:00
     return ['10:00', '12:30', '14:00'];
   }
-  // Segunda a Sexta: 09:00, 10:00, 14:00, 17:00, 17:30, 18:00 e 18:30
-  return ['09:00', '10:00', '14:00', '17:00', '17:30', '18:00', '18:30'];
+  // Segunda a Sexta: 09:00, 10:00, 14:00, 17:00 e 17:30
+  return ['09:00', '10:00', '14:00', '17:00', '17:30'];
 }
 
 export function getBookingDuration(serviceName: string): number {
