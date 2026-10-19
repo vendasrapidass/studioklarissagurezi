@@ -121,9 +121,9 @@ const BookingSection = () => {
           return false;
         }
 
-        // Limite de segurança do dia (expediente finaliza às 20:30 em dias de semana, 17:00 aos Sábados)
+        // Limite de segurança do dia (expediente finaliza às 18:00 em dias de semana, 17:00 aos Sábados)
         const isSaturday = selectedDate.getDay() === 6;
-        const limitOfDay = isSaturday ? 1020 : 1230;
+        const limitOfDay = isSaturday ? 1020 : 1080;
         if (end > limitOfDay) {
           return false;
         }

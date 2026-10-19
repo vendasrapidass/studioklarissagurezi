@@ -146,8 +146,27 @@ const AdminPanel = () => {
       })
       .then(data => {
         if (Array.isArray(data.bookings)) {
-          const active = data.bookings.filter((b: Booking) => b && b.status !== 'completed');
-          const done = data.bookings.filter((b: Booking) => b && b.status === 'completed');
+          const currentBookings = getBookings();
+          const currentCompleted = getCompleted();
+
+          const enrichBooking = (b: Booking) => {
+            let price = Number(b.price) || 0;
+            if (price === 0) {
+              const localMatch = currentBookings.find(cb => cb.id === b.id) || currentCompleted.find(cb => cb.id === b.id);
+              if (localMatch && Number(localMatch.price) > 0) {
+                price = Number(localMatch.price);
+              }
+            }
+            return { ...b, price };
+          };
+
+          const active = data.bookings
+            .filter((b: Booking) => b && b.status !== 'completed')
+            .map(enrichBooking);
+          const done = data.bookings
+            .filter((b: Booking) => b && b.status === 'completed')
+            .map(enrichBooking);
+
           saveBookings(active); saveCompleted(done);
           setBookings(active); setCompleted(done);
         }
