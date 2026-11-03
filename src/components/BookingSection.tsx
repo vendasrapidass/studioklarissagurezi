@@ -44,9 +44,8 @@ const BookingSection = () => {
   const [googleBookings, setGoogleBookings] = useState<Booking[]>([]);
   const [googleBlocks, setGoogleBlocks] = useState<ScheduleBlock[]>([]);
 
-  // Load schedule events from Google Calendar API on mount to act as source of truth
-  useEffect(() => {
-    fetch('/api/calendar?realtime=true')
+  const refreshCalendarEvents = () => {
+    fetch(`/api/calendar?realtime=true&t=${Date.now()}`)
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data.bookings)) {
@@ -59,7 +58,18 @@ const BookingSection = () => {
       .catch((err) => {
         console.error("Error loading events from Google Calendar API:", err);
       });
+  };
+
+  // Load schedule events from Google Calendar API on mount to act as source of truth
+  useEffect(() => {
+    refreshCalendarEvents();
   }, []);
+
+  useEffect(() => {
+    if (selectedDate) {
+      refreshCalendarEvents();
+    }
+  }, [selectedDate]);
 
   useEffect(() => {
     if (!selectedDate || !selectedService) {

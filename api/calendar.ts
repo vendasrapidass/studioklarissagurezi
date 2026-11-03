@@ -18,9 +18,16 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 );
 
+// Cache dinâmico em memória para o Calendar ID
+let cachedCalendarId: string | null = null;
+let lastCalendarIdFetch = 0;
+
 // Função para buscar o ID da agenda dinâmica do estúdio com timeout seguro
 async function getDynamicCalendarId(): Promise<string> {
   const fallback = process.env.GOOGLE_CALENDAR_ID || 'guilhermesuzena10@gmail.com';
+  if (cachedCalendarId && Date.now() - lastCalendarIdFetch < 10 * 60 * 1000) {
+    return cachedCalendarId;
+  }
   try {
     const fetchPromise = supabase
       .from('studio_config')
@@ -29,14 +36,18 @@ async function getDynamicCalendarId(): Promise<string> {
       .limit(1)
       .maybeSingle();
 
-    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200));
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 800));
     const result: any = await Promise.race([fetchPromise, timeoutPromise]);
     if (result && result.data?.google_calendar_id) {
-      return result.data.google_calendar_id;
+      cachedCalendarId = result.data.google_calendar_id;
+      lastCalendarIdFetch = Date.now();
+      return cachedCalendarId;
     }
   } catch (err) {
     console.warn("Could not query studio_config, using fallback calendarId:", err);
   }
+  cachedCalendarId = fallback;
+  lastCalendarIdFetch = Date.now();
   return fallback;
 }
 
@@ -102,10 +113,11 @@ const timeToMinutes = (t: string) => {
 };
 
 export default async function handler(req: any, res: any) {
-  // CORS Headers
+  // CORS & Cache Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
 
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
