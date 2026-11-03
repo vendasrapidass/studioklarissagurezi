@@ -30,8 +30,47 @@ export function removeBlock(id: string): void {
   saveBlocks(getBlocks().filter(b => b.id !== id));
 }
 
+// Base de agendamentos conhecidos garantidos (para nunca se perderem entre PC e Celular)
+export const SEED_BOOKINGS: Booking[] = [
+  {
+    id: 'milena-03112026-1015',
+    service: 'Manutenção Alongamento',
+    price: 165,
+    date: '03/11/2026',
+    time: '10:15',
+    name: 'Milena',
+    phone: '41995692912',
+    status: 'accepted',
+  },
+  {
+    id: 'gabriella-13112026-0900',
+    service: 'Manutenção Alongamento',
+    price: 170,
+    date: '13/11/2026',
+    time: '09:00',
+    name: 'Gabriella Silva',
+    phone: '(41) 99141-4369',
+    status: 'accepted',
+  }
+];
+
 export function getBookings(): Booking[] {
-  try { return JSON.parse(lsGet(BOOKINGS_KEY) || '[]'); } catch { return []; }
+  try {
+    const list: Booking[] = JSON.parse(lsGet(BOOKINGS_KEY) || '[]');
+    // Garante que Milena e Gabriella existam na base de agendamentos
+    SEED_BOOKINGS.forEach(seed => {
+      const exists = list.some(b => 
+        b.id === seed.id || 
+        (b.name && b.name.toLowerCase() === seed.name.toLowerCase() && b.date === seed.date)
+      );
+      if (!exists) {
+        list.push(seed);
+      }
+    });
+    return list;
+  } catch {
+    return [...SEED_BOOKINGS];
+  }
 }
 
 export function saveBookings(bookings: Booking[]): void {

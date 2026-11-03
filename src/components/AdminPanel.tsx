@@ -152,7 +152,8 @@ const AdminPanel = () => {
           const enrichBooking = (b: Booking) => {
             let price = Number(b.price) || 0;
             if (price === 0) {
-              const localMatch = currentBookings.find(cb => cb.id === b.id) || currentCompleted.find(cb => cb.id === b.id);
+              const localMatch = currentBookings.find(cb => cb.id === b.id || (cb.name && b.name && cb.name.toLowerCase() === b.name.toLowerCase() && cb.date === b.date)) 
+                || currentCompleted.find(cb => cb.id === b.id);
               if (localMatch && Number(localMatch.price) > 0) {
                 price = Number(localMatch.price);
               }
@@ -160,15 +161,38 @@ const AdminPanel = () => {
             return { ...b, price };
           };
 
-          const active = data.bookings
+          const activeFromApi = data.bookings
             .filter((b: Booking) => b && b.status !== 'completed')
             .map(enrichBooking);
-          const done = data.bookings
+          const doneFromApi = data.bookings
             .filter((b: Booking) => b && b.status === 'completed')
             .map(enrichBooking);
 
-          saveBookings(active); saveCompleted(done);
-          setBookings(active); setCompleted(done);
+          // MERGE BIDIRECIONAL: preserva agendamentos locais (ex: Milena, Gabriella) e sincroniza para o Google Calendar
+          const mergedActive = [...activeFromApi];
+          currentBookings.forEach(localB => {
+            if (!localB || localB.status === 'completed') return;
+            const alreadyInApi = mergedActive.some(ab => 
+              ab.id === localB.id || 
+              (ab.name && localB.name && ab.name.toLowerCase() === localB.name.toLowerCase() && ab.date === localB.date)
+            );
+            if (!alreadyInApi) {
+              mergedActive.push(localB);
+              // Auto-sincroniza com o Google Calendar em background para garantir cruzamento total
+              fetch('/api/calendar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  type: 'booking',
+                  booking: localB,
+                  duration: getBookingDuration(localB.service)
+                })
+              }).catch(e => console.warn('Auto-sync to Google error:', e));
+            }
+          });
+
+          saveBookings(mergedActive); saveCompleted(doneFromApi);
+          setBookings(mergedActive); setCompleted(doneFromApi);
         }
         if (Array.isArray(data.blocks)) {
           saveBlocks(data.blocks);

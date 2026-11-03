@@ -160,10 +160,18 @@ export default async function handler(req: any, res: any) {
                                 summaryLower.includes('bloqueado') || 
                                 summaryLower.includes('bloqueio') ||
                                 summaryLower.includes('indisponível') ||
-                                summaryLower.includes('indisponivel');
+                                summaryLower.includes('indisponivel') ||
+                                summaryLower.includes('fechado') ||
+                                summaryLower.includes('feriado') ||
+                                summaryLower.includes('almoço') ||
+                                summaryLower.includes('almoco') ||
+                                summaryLower.includes('médico') ||
+                                summaryLower.includes('medico') ||
+                                summaryLower.includes('dentista') ||
+                                summaryLower.startsWith('bloq');
         
-        const hasDashSeparator = summary.includes(' - ');
-        const isBlock = shared?.type === 'block' || hasBlockKeyword || (!hasDashSeparator && !shared?.service);
+        // Só é considerado bloqueio se o evento foi explicitamente salvo como bloqueio ou possui palavras de bloqueio/ausência
+        const isBlock = shared?.type === 'block' || hasBlockKeyword;
         const endStr = event.end?.dateTime || event.end?.date;
         const endDate = endStr ? new Date(endStr) : new Date();
         const isPast = endDate.getTime() < now.getTime();
@@ -206,23 +214,42 @@ export default async function handler(req: any, res: any) {
             reason: shared?.reason || summary.replace(/^(Bloqueio - |AGENDA BLOQUEADA - )/i, '') || 'Bloqueio',
           });
         } else {
-          let service = '';
-          let name = 'Cliente Google';
+          let service = 'Manutenção Alongamento';
+          let name = 'Cliente';
           let phone = '';
           let price = 0;
           let status = 'accepted';
 
           if (shared) {
-            service = shared.service || '';
-            name = shared.name || '';
+            service = shared.service || 'Manutenção Alongamento';
+            name = shared.name || summary;
             phone = shared.phone || '';
           } else {
+            // Eventos criados diretamente no Google Calendar (ex: "Poliana", "Isa", "Alongamento - Bianca")
             const parts = summary.split(' - ');
             if (parts.length >= 2) {
               service = parts.slice(0, -1).join(' - ').trim();
               name = parts[parts.length - 1].trim();
             } else {
-              service = summary;
+              // Nome direto sem tracinho (ex: "Poliana", "Isa", "Manutenção Duda", "Alongamento Carol")
+              const cleanSummary = summary.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+              if (cleanSummary.includes('alongamento') || cleanSummary.includes('molde f1')) {
+                service = 'Alongamento Molde F1';
+                name = summary.replace(/alongamento\s*(molde\s*f1)?/i, '').replace(/[-–:]/g, '').trim() || summary.trim();
+              } else if (cleanSummary.includes('manutencao')) {
+                service = 'Manutenção Alongamento';
+                name = summary.replace(/manuten[cç][aã]o\s*(alongamento)?/i, '').replace(/[-–:]/g, '').trim() || summary.trim();
+              } else if (cleanSummary.includes('banho de gel') || cleanSummary.includes('banho')) {
+                service = 'Banho de Gel';
+                name = summary.replace(/banho\s*(de\s*gel)?/i, '').replace(/[-–:]/g, '').trim() || summary.trim();
+              } else if (cleanSummary.includes('esmaltacao')) {
+                service = 'Esmaltação em Gel';
+                name = summary.replace(/esmalta[cç][aã]o\s*(em\s*gel)?/i, '').replace(/[-–:]/g, '').trim() || summary.trim();
+              } else {
+                // Nome puro da cliente (ex: "Poliana", "Isa")
+                name = summary.trim();
+                service = 'Manutenção Alongamento';
+              }
             }
           }
 
@@ -246,6 +273,9 @@ export default async function handler(req: any, res: any) {
             }
             if (price === 0 && summary) {
               price = getServicePrice(summary);
+            }
+            if (price === 0) {
+              price = 120; // Preço padrão de manutenção
             }
           }
 
