@@ -57,8 +57,16 @@ export const SEED_BOOKINGS: Booking[] = [
 export function getBookings(): Booking[] {
   try {
     const list: Booking[] = JSON.parse(lsGet(BOOKINGS_KEY) || '[]');
-    // Garante que Milena e Gabriella existam na base de agendamentos
+    const completedList = getCompleted();
+    
+    // Garante que Milena e Gabriella existam caso ainda não tenham sido agendadas ou concluídas
     SEED_BOOKINGS.forEach(seed => {
+      const isAlreadyCompleted = completedList.some(c => 
+        c.id === seed.id || 
+        (c.name && seed.name && c.name.toLowerCase() === seed.name.toLowerCase() && c.date === seed.date)
+      );
+      if (isAlreadyCompleted) return; // Se já foi finalizado, nunca re-adiciona nos agendamentos ativos!
+
       const exists = list.some(b => 
         b.id === seed.id || 
         (b.name && b.name.toLowerCase() === seed.name.toLowerCase() && b.date === seed.date)

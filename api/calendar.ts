@@ -123,8 +123,9 @@ export default async function handler(req: any, res: any) {
     return res.status(200).end();
   }
 
-  // Resolve dynamic calendarId
-  const activeCalendarId = await getDynamicCalendarId();
+  // Resolve dynamic calendarId or client override
+  const queryCalendarId = (req.query?.calendarId as string) || (req.headers?.['x-calendar-id'] as string);
+  const activeCalendarId = queryCalendarId || await getDynamicCalendarId();
 
   try {
     // ----------------------------------------------------
@@ -333,7 +334,12 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      return res.status(200).json({ bookings, blocks });
+      return res.status(200).json({ 
+        bookings, 
+        blocks,
+        calendarId: activeCalendarId,
+        serviceAccountEmail: process.env.GOOGLE_CLIENT_EMAIL || null
+      });
     }
 
     // ----------------------------------------------------
@@ -374,8 +380,15 @@ export default async function handler(req: any, res: any) {
             if (ev.id === eventId) continue;
             if (ev.status === 'cancelled') continue;
 
+            // Se for o mesmo cliente (ex: sincronização ou atualização), não conflita
+            if (booking.name && (ev.summary || '').toLowerCase().includes(booking.name.toLowerCase())) {
+              continue;
+            }
+
             const isAllDay = !!ev.start?.date;
-            if (isAllDay) {
+            const evSummary = (ev.summary || '').toLowerCase();
+            const isBlockSummary = evSummary.includes('bloque') || evSummary.includes('folga') || evSummary.includes('fechado') || evSummary.includes('indispon');
+            if (isAllDay && (ev.extendedProperties?.shared?.type === 'block' || isBlockSummary)) {
               return res.status(409).json({ error: 'slot_occupied', message: 'Este dia está bloqueado para agendamentos.' });
             }
 
@@ -400,29 +413,48 @@ export default async function handler(req: any, res: any) {
         const title = `${booking.service} - ${booking.name}`;
         const description = `Cliente: ${booking.name}\nContato: ${booking.phone}\nValor: R$ ${booking.price},00`;
 
-        await calendar.events.insert({
-          calendarId: activeCalendarId,
-          requestBody: {
-            id: eventId,
-            summary: title,
-            description,
-            start: { dateTime: startDateTime, timeZone: 'America/Sao_Paulo' },
-            end: { dateTime: endDateTime, timeZone: 'America/Sao_Paulo' },
-            extendedProperties: {
-              shared: {
-                id,
-                type: 'booking',
-                service: booking.service,
-                name: booking.name,
-                phone: booking.phone,
-                price: String(booking.price),
-                status: booking.status || 'accepted',
-                date: booking.date,
-                time: booking.time,
-              },
+        const insertPayload: any = {
+          summary: title,
+          description,
+          start: { dateTime: startDateTime, timeZone: 'America/Sao_Paulo' },
+          end: { dateTime: endDateTime, timeZone: 'America/Sao_Paulo' },
+          extendedProperties: {
+            shared: {
+              id,
+              type: 'booking',
+              service: booking.service,
+              name: booking.name,
+              phone: booking.phone,
+              price: String(booking.price),
+              status: booking.status || 'accepted',
+              date: booking.date,
+              time: booking.time,
             },
           },
-        });
+        };
+
+        const isValidCustomId = /^[a-v0-9]{5,1024}$/.test(eventId);
+        if (isValidCustomId) {
+          insertPayload.id = eventId;
+        }
+
+        let insertedEvent: any;
+        try {
+          insertedEvent = await calendar.events.insert({
+            calendarId: activeCalendarId,
+            requestBody: insertPayload,
+          });
+        } catch (insertErr: any) {
+          if (insertPayload.id) {
+            delete insertPayload.id;
+            insertedEvent = await calendar.events.insert({
+              calendarId: activeCalendarId,
+              requestBody: insertPayload,
+            });
+          } else {
+            throw insertErr;
+          }
+        }
 
         // 2. Espelhar no Supabase de forma segura e não-bloqueante
         try {
@@ -551,30 +583,75 @@ export default async function handler(req: any, res: any) {
         const title = `${booking.service} - ${booking.name}${suffix}`;
         const description = `Cliente: ${booking.name}\nContato: ${booking.phone}\nValor: R$ ${booking.price},00`;
 
-        // 1. Atualizar no Google Calendar
-        await calendar.events.update({
-          calendarId: activeCalendarId,
-          eventId,
-          requestBody: {
-            summary: title,
-            description,
-            start: { dateTime: startDateTime, timeZone: 'America/Sao_Paulo' },
-            end: { dateTime: endDateTime, timeZone: 'America/Sao_Paulo' },
-            extendedProperties: {
-              shared: {
-                id,
-                type: 'booking',
-                service: booking.service,
-                name: booking.name,
-                phone: booking.phone,
-                price: String(booking.price),
-                status: booking.status,
-                date: booking.date,
-                time: booking.time,
-              },
+        // 1. Atualizar no Google Calendar de forma ultra resiliente
+        const updatePayload = {
+          summary: title,
+          description,
+          start: { dateTime: startDateTime, timeZone: 'America/Sao_Paulo' },
+          end: { dateTime: endDateTime, timeZone: 'America/Sao_Paulo' },
+          extendedProperties: {
+            shared: {
+              id,
+              type: 'booking',
+              service: booking.service,
+              name: booking.name,
+              phone: booking.phone,
+              price: String(booking.price),
+              status: booking.status,
+              date: booking.date,
+              time: booking.time,
             },
           },
-        });
+        };
+
+        let updated = false;
+        try {
+          await calendar.events.update({
+            calendarId: activeCalendarId,
+            eventId,
+            requestBody: updatePayload,
+          });
+          updated = true;
+        } catch (updateErr: any) {
+          console.warn(`Update by eventId ${eventId} failed: ${updateErr?.message || updateErr}. Buscando evento na agenda...`);
+          try {
+            const dayStartIso = `${isoDate}T00:00:00-03:00`;
+            const dayEndIso = `${isoDate}T23:59:59-03:00`;
+            const searchRes = await calendar.events.list({
+              calendarId: activeCalendarId,
+              timeMin: new Date(dayStartIso).toISOString(),
+              timeMax: new Date(dayEndIso).toISOString(),
+              singleEvents: true,
+            });
+            const existing = (searchRes.data.items || []).find((ev: any) => {
+              const s = (ev.summary || '').toLowerCase();
+              return (booking.name && s.includes(booking.name.toLowerCase())) || ev.extendedProperties?.shared?.id === id;
+            });
+            if (existing && existing.id) {
+              await calendar.events.update({
+                calendarId: activeCalendarId,
+                eventId: existing.id,
+                requestBody: updatePayload,
+              });
+              updated = true;
+            }
+          } catch (searchErr) {
+            console.warn("Fallback search in PUT error:", searchErr);
+          }
+        }
+
+        // Se ainda não existia no Google Calendar, cria na hora para garantir que nunca se perca!
+        if (!updated) {
+          try {
+            await calendar.events.insert({
+              calendarId: activeCalendarId,
+              requestBody: updatePayload,
+            });
+            updated = true;
+          } catch (insertFallbackErr) {
+            console.warn("Fallback insert in PUT error:", insertFallbackErr);
+          }
+        }
 
         // 2. Atualizar no Supabase
         try {

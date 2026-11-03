@@ -70,23 +70,22 @@ export default async function handler(req: any, res: any) {
 
     console.log(`Acesso ACL de Proprietário concedido a: ${email_pessoal}`);
 
-    // 3. Gravar o novo google_calendar_id no Supabase na tabela de configurações
-    const { error: dbError } = await supabase
-      .from('studio_config')
-      .upsert(
-        {
-          nome_do_estudio,
-          email_pessoal,
-          google_calendar_id: googleCalendarId,
-        },
-        { onConflict: 'email_pessoal' }
-      );
-
-    if (dbError) {
-      throw dbError;
+    // 3. Gravar o novo google_calendar_id no Supabase na tabela de configurações (não-bloqueante)
+    try {
+      await supabase
+        .from('studio_config')
+        .upsert(
+          {
+            nome_do_estudio,
+            email_pessoal,
+            google_calendar_id: googleCalendarId,
+          },
+          { onConflict: 'email_pessoal' }
+        );
+      console.log(`Agenda vinculada e persistida no Supabase com sucesso.`);
+    } catch (dbError) {
+      console.warn("Supabase provision save error (non-fatal):", dbError);
     }
-
-    console.log(`Agenda vinculada e persistida no Supabase com sucesso.`);
 
     return res.status(201).json({
       success: true,

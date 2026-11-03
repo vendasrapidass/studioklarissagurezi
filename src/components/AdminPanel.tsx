@@ -85,6 +85,8 @@ const AdminPanel = () => {
   const [studioName, setStudioName] = useState('Studio Klarissa Guarezi');
   const [ownerEmail, setOwnerEmail] = useState('');
   const [isProvisioning, setIsProvisioning] = useState(false);
+  const [activeCalendarId, setActiveCalendarId] = useState('');
+  const [serviceAccountEmail, setServiceAccountEmail] = useState('');
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -136,8 +138,13 @@ const AdminPanel = () => {
       console.error('Error reading local store:', e);
     }
 
-    // Sync from Google Calendar API (best effort)
-    fetch(`/api/calendar?t=${Date.now()}`, {
+    // Sync from Google Calendar API
+    const savedCalId = typeof window !== 'undefined' ? localStorage.getItem('studio_calendar_id') : null;
+    const fetchUrl = savedCalId 
+      ? `/api/calendar?t=${Date.now()}&calendarId=${encodeURIComponent(savedCalId)}` 
+      : `/api/calendar?t=${Date.now()}`;
+
+    fetch(fetchUrl, {
       headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
     })
       .then(res => {
@@ -145,6 +152,9 @@ const AdminPanel = () => {
         return res.json();
       })
       .then(data => {
+        if (data.calendarId) setActiveCalendarId(data.calendarId);
+        if (data.serviceAccountEmail) setServiceAccountEmail(data.serviceAccountEmail);
+
         if (Array.isArray(data.bookings)) {
           const currentBookings = getBookings();
           const currentCompleted = getCompleted();
@@ -168,10 +178,17 @@ const AdminPanel = () => {
             .filter((b: Booking) => b && b.status === 'completed')
             .map(enrichBooking);
 
-          // MERGE BIDIRECIONAL: preserva agendamentos locais (ex: Milena, Gabriella) e sincroniza para o Google Calendar
+          // MERGE BIDIRECIONAL ATIVOS: preserva agendamentos locais (ex: Milena, Gabriella) e sincroniza para o Google Calendar
           const mergedActive = [...activeFromApi];
           currentBookings.forEach(localB => {
             if (!localB || localB.status === 'completed') return;
+            // Se já foi finalizado localmente, não re-adiciona nos ativos
+            const isDoneLocally = currentCompleted.some(cb => 
+              cb.id === localB.id || 
+              (cb.name && localB.name && cb.name.toLowerCase() === localB.name.toLowerCase() && cb.date === localB.date)
+            );
+            if (isDoneLocally) return;
+
             const alreadyInApi = mergedActive.some(ab => 
               ab.id === localB.id || 
               (ab.name && localB.name && ab.name.toLowerCase() === localB.name.toLowerCase() && ab.date === localB.date)
@@ -191,8 +208,23 @@ const AdminPanel = () => {
             }
           });
 
-          saveBookings(mergedActive); saveCompleted(doneFromApi);
-          setBookings(mergedActive); setCompleted(doneFromApi);
+          // MERGE BIDIRECIONAL CONCLUÍDOS: preserva concluídos locais e da API sem perder histórico
+          const mergedCompleted = [...doneFromApi];
+          currentCompleted.forEach(loc => {
+            if (!loc) return;
+            const exists = mergedCompleted.some(d => 
+              d.id === loc.id || 
+              (d.name && loc.name && d.name.toLowerCase() === loc.name.toLowerCase() && d.date === loc.date)
+            );
+            if (!exists) {
+              mergedCompleted.push(loc);
+            }
+          });
+
+          saveBookings(mergedActive); 
+          saveCompleted(mergedCompleted);
+          setBookings(mergedActive); 
+          setCompleted(mergedCompleted);
         }
         if (Array.isArray(data.blocks)) {
           saveBlocks(data.blocks);
@@ -217,9 +249,14 @@ const AdminPanel = () => {
         if (!res.ok) { const e = await res.json().catch(() => ({})); throw e; }
         return res.json();
       })
-      .then(() => {
-        toast.success('Agenda criada! Peça para aceitar o convite no e-mail.');
+      .then(data => {
+        if (data.google_calendar_id) {
+          localStorage.setItem('studio_calendar_id', data.google_calendar_id);
+          setActiveCalendarId(data.google_calendar_id);
+        }
+        toast.success('Agenda criada e sincronizada com sucesso! O convite foi enviado para o seu e-mail Google.');
         setIsProvisioning(false);
+        reload();
       })
       .catch(err => {
         console.error('Provision error:', err);
@@ -244,10 +281,14 @@ const AdminPanel = () => {
 
   const handleFinalize = (booking: Booking) => {
     if (!booking) return;
-    addCompleted(booking);
-    const updated = bookings.filter(b => b.id !== booking.id);
-    saveBookings(updated); setBookings(updated); setCompleted(getCompleted());
     const done = { ...booking, status: 'completed' as const };
+    addCompleted(done);
+    const updated = bookings.filter(b => b.id !== booking.id);
+    saveBookings(updated); 
+    setBookings(updated); 
+    setCompleted(getCompleted());
+    toast.success(`✨ Atendimento de ${booking.name} concluído! Movido para a aba "Concluídos" e somado ao Faturamento.`);
+    
     fetch('/api/calendar', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: booking.id, type: 'booking', booking: done, duration: getBookingDuration(booking.service) }),
@@ -619,7 +660,7 @@ const AdminPanel = () => {
               {/* Sub-filter tabs */}
               <div className="flex gap-2 flex-wrap pb-3 border-b border-primary/5">
                 {([
-                  { key: 'accepted', label: 'Todos', count: acceptedCount, color: 'text-emerald-400' },
+                  { key: 'accepted', label: 'Agendados', count: acceptedCount, color: 'text-emerald-400' },
                   { key: 'completed', label: 'Concluídos', count: completed.length, color: 'text-primary' },
                   { key: 'blocks', label: 'Bloqueios', count: blocks.length, color: 'text-destructive' }
                 ] as const).map(sf => (
@@ -1046,24 +1087,60 @@ const AdminPanel = () => {
 
           {/* ── SETTINGS TAB ── */}
           {tab === 'settings' && (
-            <div className="space-y-6 max-w-md mx-auto">
+            <div className="space-y-6 max-w-lg mx-auto">
               <div className="bg-card/80 backdrop-blur-xl p-6 md:p-8 rounded-2xl border border-primary/10 shadow-[0_0_0_1px_rgba(255,255,255,0.05),0_20px_50px_-15px_rgba(0,0,0,0.5)] space-y-6">
                 <div>
-                  <h3 className="text-lg font-bold text-foreground mb-1">Vincular Google Agenda</h3>
-                  <p className="text-xs text-muted-foreground">Crie e configure uma agenda automática para o seu estúdio integrada com a sua conta Google pessoal.</p>
+                  <h3 className="text-lg font-bold text-foreground mb-1">Status da Integração Google Agenda</h3>
+                  <p className="text-xs text-muted-foreground">Conexão oficial entre o site e a sua agenda no celular.</p>
                 </div>
-                <div className="space-y-4">
+
+                <div className="p-4 rounded-xl bg-background/60 border border-primary/10 space-y-3 text-xs">
+                  <div>
+                    <span className="text-muted-foreground block font-medium uppercase tracking-wider mb-0.5">ID da Agenda Atual:</span>
+                    <span className="font-mono text-primary font-bold break-all">{activeCalendarId || 'Padrão do Sistema'}</span>
+                  </div>
+                  {serviceAccountEmail && (
+                    <div>
+                      <span className="text-muted-foreground block font-medium uppercase tracking-wider mb-0.5">Robô de Sincronização (E-mail):</span>
+                      <div className="flex items-center justify-between gap-2 bg-zinc-900/80 p-2.5 rounded-lg border border-primary/10">
+                        <span className="font-mono text-zinc-300 break-all select-all text-[11px]">{serviceAccountEmail}</span>
+                        <button 
+                          type="button" 
+                          onClick={() => { navigator.clipboard.writeText(serviceAccountEmail); toast.success('E-mail do robô copiado!'); }}
+                          className="px-2.5 py-1 bg-primary text-primary-foreground text-[10px] font-bold rounded-md hover:scale-105 active:scale-95 transition-all flex-shrink-0"
+                        >
+                          Copiar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-4 pt-2 border-t border-primary/10">
+                  <h4 className="text-sm font-bold text-foreground">Vincular Nova Agenda ao seu Gmail</h4>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2 block">Nome do Estúdio</label>
                     <input type="text" value={studioName} onChange={e => setStudioName(e.target.value)} placeholder="Ex: Studio Klarissa Guarezi" className="w-full bg-background/50 border border-primary/10 focus:border-primary/40 p-3.5 rounded-xl outline-none transition-all text-foreground text-sm placeholder:text-muted-foreground/40" />
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2 block">E-mail Pessoal (Gmail)</label>
-                    <input type="email" value={ownerEmail} onChange={e => setOwnerEmail(e.target.value)} placeholder="dona@gmail.com" className="w-full bg-background/50 border border-primary/10 focus:border-primary/40 p-3.5 rounded-xl outline-none transition-all text-foreground text-sm placeholder:text-muted-foreground/40" />
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2 block">Seu E-mail Pessoal (Gmail)</label>
+                    <input type="email" value={ownerEmail} onChange={e => setOwnerEmail(e.target.value)} placeholder="exemplo@gmail.com" className="w-full bg-background/50 border border-primary/10 focus:border-primary/40 p-3.5 rounded-xl outline-none transition-all text-foreground text-sm placeholder:text-muted-foreground/40" />
                   </div>
                   <button onClick={handleProvisionCalendar} disabled={!studioName || !ownerEmail || isProvisioning} className="w-full py-4 bg-primary text-primary-foreground font-bold rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                    {isProvisioning ? 'Criando Agenda...' : 'Enviar Convite Oficial'}
+                    {isProvisioning ? 'Criando Agenda...' : 'Vincular e Enviar Convite Oficial'}
                   </button>
+                </div>
+
+                <div className="p-4 rounded-xl bg-primary/5 border border-primary/15 space-y-2">
+                  <p className="text-xs font-bold text-primary flex items-center gap-1.5">
+                    📱 Como ver os agendamentos no app do celular:
+                  </p>
+                  <ol className="text-xs text-muted-foreground space-y-1 list-decimal pl-4">
+                    <li>Abra o aplicativo <b>Google Agenda</b> no seu iPhone/Android.</li>
+                    <li>Toque no menu (3 tracinhos no canto superior esquerdo).</li>
+                    <li>Certifique-se de que a caixinha ao lado do nome da agenda está <b>marcada (✓)</b>.</li>
+                    <li>Pronto! Todas as clientes agendadas pelo site aparecem no mesmo instante.</li>
+                  </ol>
                 </div>
               </div>
             </div>
