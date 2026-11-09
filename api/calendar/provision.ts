@@ -33,42 +33,59 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const { email_pessoal, nome_do_estudio } = req.body;
+    const { email_pessoal, nome_do_estudio, calendarId, createNew } = req.body;
 
-    if (!email_pessoal || !nome_do_estudio) {
-      return res.status(400).json({ error: 'Campos email_pessoal e nome_do_estudio são obrigatórios.' });
+    if (!email_pessoal) {
+      return res.status(400).json({ error: 'Campo email_pessoal é obrigatório.' });
     }
 
-    console.log(`Iniciando auto-provisionamento de agenda para o estúdio: "${nome_do_estudio}" (${email_pessoal})`);
+    const studioName = nome_do_estudio || 'Studio Klarissa Guarezi';
+    let googleCalendarId = calendarId || '24283cd68ba66c84fb7927560352d4e5d5a4e0e71526527976af2a6557c1c1ac@group.calendar.google.com';
 
-    // 1. Criar a nova agenda secundária via Conta de Serviço
-    const calendarResponse = await calendar.calendars.insert({
-      requestBody: {
-        summary: `Zynk - ${nome_do_estudio}`,
-        timeZone: 'America/Sao_Paulo',
-      },
-    });
-
-    const googleCalendarId = calendarResponse.data.id;
-    if (!googleCalendarId) {
-      throw new Error('Não foi possível obter o ID da agenda criada no Google.');
-    }
-
-    console.log(`Agenda criada com sucesso. ID: ${googleCalendarId}`);
-
-    // 2. Conceder permissão de proprietária (owner) para o Gmail pessoal da dona do estúdio via ACL
-    await calendar.acl.insert({
-      calendarId: googleCalendarId,
-      requestBody: {
-        role: 'owner',
-        scope: {
-          type: 'user',
-          value: email_pessoal,
+    // 1. Criar nova agenda apenas se explicitamente solicitado
+    if (createNew) {
+      console.log(`Criando nova agenda para o estúdio: "${studioName}" (${email_pessoal})`);
+      const calendarResponse = await calendar.calendars.insert({
+        requestBody: {
+          summary: `Zynk - ${studioName}`,
+          timeZone: 'America/Sao_Paulo',
         },
-      },
-    });
+      });
 
-    console.log(`Acesso ACL de Proprietário concedido a: ${email_pessoal}`);
+      googleCalendarId = calendarResponse.data.id;
+      if (!googleCalendarId) {
+        throw new Error('Não foi possível obter o ID da agenda criada no Google.');
+      }
+      console.log(`Agenda criada com sucesso. ID: ${googleCalendarId}`);
+    }
+
+    // 2. Conceder permissão de proprietária (owner) para o Gmail pessoal informado via ACL
+    try {
+      await calendar.acl.insert({
+        calendarId: googleCalendarId,
+        requestBody: {
+          role: 'owner',
+          scope: {
+            type: 'user',
+            value: email_pessoal,
+          },
+        },
+      });
+      console.log(`Acesso ACL de Proprietário concedido a: ${email_pessoal}`);
+    } catch (aclErr: any) {
+      console.warn('ACL insert note:', aclErr?.message || aclErr);
+      try {
+        await calendar.acl.patch({
+          calendarId: googleCalendarId,
+          ruleId: `user:${email_pessoal}`,
+          requestBody: {
+            role: 'owner',
+          },
+        });
+      } catch (patchErr) {
+        console.warn('ACL patch note:', patchErr);
+      }
+    }
 
     // 3. Gravar o novo google_calendar_id no Supabase na tabela de configurações (não-bloqueante)
     try {
