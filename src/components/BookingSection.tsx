@@ -10,7 +10,6 @@ import { CheckCircle, X, Plus } from 'lucide-react';
 
 const PIX_KEY = '00020126580014BR.GOV.BCB.PIX013607ce7f99-96bd-4bec-82bc-fecc91ad91525204000053039865802BR5925Klarissa Hemanuely Sabino6009SAO PAULO621405105q0TQIlKGk6304420A';
 const SINAL_VALUE = 50;
-const IMGUR_CLIENT_ID = 'e8d53065b210214'; // Fallback Imgur client ID for anonymous uploads
 
 type ServiceType = typeof SERVICES[0];
 
@@ -25,14 +24,14 @@ const BookingSection = () => {
   const [phone, setPhone] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lastWhatsAppUrl, setLastWhatsAppUrl] = useState('');
 
   // Estados do Modal Pix
   const [showPixModal, setShowPixModal] = useState(false);
   const [pixCopiado, setPixCopiado] = useState(false);
   
-  // Estados de Upload do Comprovante
+  // Estados de Upload do Comprovante (opcional, sem bloquear)
   const [comprovanteFile, setComprovanteFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
   const [comprovanteError, setComprovanteError] = useState('');
 
   const totalDuration = useMemo(() => {
@@ -233,39 +232,8 @@ const BookingSection = () => {
     setShowPixModal(true);
   };
 
-  const handlePixSubmit = async () => {
-    if (!comprovanteFile) {
-      setComprovanteError('O comprovante é obrigatório para confirmar o agendamento.');
-      return;
-    }
-    setIsUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append('image', comprovanteFile);
-      
-      const res = await fetch('https://api.imgur.com/3/image', {
-        method: 'POST',
-        headers: { Authorization: `Client-ID ${IMGUR_CLIENT_ID}` },
-        body: formData,
-      });
-      
-      const data = await res.json();
-      if (data.success) {
-        const comprovanteUrl = data.data.link;
-        setShowPixModal(false);
-        finishBookingFlow(comprovanteUrl); 
-      } else {
-        throw new Error('Falha no Imgur');
-      }
-    } catch (error) {
-      setComprovanteError('Erro ao enviar comprovante. Tente novamente ou entre em contato.');
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const finishBookingFlow = (comprovanteUrl?: string) => {
-    if (!selectedDate) return;
+  const finishBookingFlow = () => {
+    if (!selectedDate || !selectedTime || !name.trim()) return;
     const dateStr = format(selectedDate, 'dd/MM/yyyy');
     const booking = {
       id: generateUUID(),
@@ -280,30 +248,16 @@ const BookingSection = () => {
 
     setIsSubmitting(true);
 
-    const finishBooking = () => {
-      addBooking(booking);
-      let msg = `✨ STUDIO KLARISSA GUAREZI ✨\n\nOlá! 🌸\nMeu nome é ${booking.name}.\nMeu agendamento foi realizado com sucesso:\n\n📋 Serviço: ${booking.service}\n💰 Valor: R$ ${booking.price},00\n📅 Data: ${booking.date}\n🕐 Horário: ${booking.time}\n📱 Meu WhatsApp: ${booking.phone}`;
-      
-      if (comprovanteUrl) {
-        msg += `\n\n💵 *Sinal Pago:* R$ ${SINAL_VALUE},00\n🧾 *Comprovante do Sinal:*\n${comprovanteUrl}`;
-      }
-      msg += `\n\nObrigado! 💕`;
+    // 1. Salva imediatamente no banco local (garante que não se perde)
+    addBooking(booking);
 
-      window.location.href = generateWhatsAppUrl(WHATSAPP_NUMBER, msg);
+    // 2. Prepara mensagem para o WhatsApp com todos os detalhes e comprovante
+    const msg = `✨ *STUDIO KLARISSA GUAREZI* ✨\n\nOlá Klarissa! 🌸\nMeu nome é *${booking.name}*.\nAcabei de realizar meu agendamento pelo site:\n\n📋 *Serviço:* ${booking.service}\n💰 *Valor:* R$ ${booking.price},00\n📅 *Data:* ${booking.date}\n🕐 *Horário:* ${booking.time}\n📱 *Meu WhatsApp:* ${booking.phone}\n\n💵 *Sinal de R$ ${SINAL_VALUE},00 realizado via Pix!*\n🧾 *Estou enviando o comprovante aqui no anexo:*`;
 
-      setIsSubmitting(false);
-      setShowSuccess(true);
-      setStep(1);
-      setSelectedService(null);
-      setExtras([]);
-      setSelectedDate(undefined);
-      setSelectedTime('');
-      setName('');
-      setPhone('');
-      setComprovanteFile(null);
-      setComprovanteError('');
-    };
+    const zapUrl = generateWhatsAppUrl(WHATSAPP_NUMBER, msg);
+    setLastWhatsAppUrl(zapUrl);
 
+    // 3. Sincroniza em paralelo com o Google Calendar sem travar o redirecionamento
     fetch('/api/calendar', {
       method: 'POST',
       headers: {
@@ -317,39 +271,36 @@ const BookingSection = () => {
     })
       .then(async (res) => {
         if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw errData;
+          console.warn("Google Calendar sync status:", res.status);
+        } else {
+          console.log("Booking successfully synced to Google Calendar!");
         }
-        return res.json();
-      })
-      .then((data) => {
-        console.log("Booking synced to Google Calendar:", data);
-        finishBooking();
       })
       .catch((err) => {
-        console.error("Error syncing booking to Google Calendar:", err);
-        setIsSubmitting(false);
-
-        if (err && err.error === 'slot_occupied') {
-          alert(err.message || "Este horário acabou de ser preenchido, por favor selecione outro.");
-          setStep(3);
-          setSelectedTime('');
-          
-          fetch('/api/calendar?realtime=true')
-            .then((res) => res.json())
-            .then((data) => {
-              if (Array.isArray(data.bookings)) {
-                setGoogleBookings(data.bookings);
-              }
-              if (Array.isArray(data.blocks)) {
-                setGoogleBlocks(data.blocks);
-              }
-            })
-            .catch((fetchErr) => console.error("Error reloading events:", fetchErr));
-        } else {
-          alert("Ocorreu um erro ao salvar o agendamento. Por favor, tente novamente.");
-        }
+        console.warn("Background Google Calendar sync error:", err);
       });
+
+    // 4. Conclui o fluxo e abre o WhatsApp imediatamente
+    setIsSubmitting(false);
+    setShowPixModal(false);
+    setShowSuccess(true);
+
+    try {
+      window.location.href = zapUrl;
+    } catch (e) {
+      console.warn("Auto-redirect to WhatsApp error:", e);
+    }
+
+    // 5. Limpa os campos do formulário
+    setStep(1);
+    setSelectedService(null);
+    setExtras([]);
+    setSelectedDate(undefined);
+    setSelectedTime('');
+    setName('');
+    setPhone('');
+    setComprovanteFile(null);
+    setComprovanteError('');
   };
 
   const goBack = () => {
@@ -575,7 +526,7 @@ const BookingSection = () => {
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-card p-8 rounded-3xl card-shadow w-full max-w-sm border border-border text-center relative"
+              className="bg-card p-8 rounded-3xl card-shadow w-full max-w-sm border border-border text-center relative space-y-4"
             >
               <button
                 onClick={() => setShowSuccess(false)}
@@ -583,11 +534,31 @@ const BookingSection = () => {
               >
                 <X className="w-5 h-5" />
               </button>
-              <CheckCircle className="w-16 h-16 text-success mx-auto mb-4" />
-              <h3 className="text-xl font-bold mb-2">Agendamento Realizado!</h3>
-              <p className="text-muted-foreground text-sm">
-                Seu agendamento foi enviado com sucesso. Aguarde a confirmação do Studio pelo WhatsApp.
-              </p>
+              <CheckCircle className="w-16 h-16 text-emerald-400 mx-auto" />
+              <div>
+                <h3 className="text-xl font-bold mb-1">Agendamento Pré-Reservado!</h3>
+                <p className="text-muted-foreground text-xs leading-relaxed">
+                  Seu horário já foi reservado no sistema! Para confirmação definitiva, envie o comprovante do sinal de <strong>R$ {SINAL_VALUE},00</strong> no WhatsApp da Klarissa.
+                </p>
+              </div>
+
+              <a
+                href={lastWhatsAppUrl || generateWhatsAppUrl(WHATSAPP_NUMBER, 'Olá Studio Klarissa Guarezi! Gostaria de confirmar meu agendamento.')}
+                className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-2xl transition-all flex items-center justify-center gap-2 text-sm shadow-[0_0_20px_rgba(16,185,129,0.3)] active:scale-95"
+              >
+                <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                  <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981z"/>
+                </svg>
+                Abrir WhatsApp da Klarissa
+              </a>
+
+              <button
+                type="button"
+                onClick={() => setShowSuccess(false)}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors underline pt-1 block mx-auto"
+              >
+                Fechar
+              </button>
             </motion.div>
           </motion.div>
         )}
@@ -614,69 +585,89 @@ const BookingSection = () => {
                   setComprovanteFile(null);
                   setComprovanteError('');
                 }}
-                className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors"
+                className="absolute top-4 right-4 text-muted-foreground hover:text-foreground transition-colors p-1"
               >
-                <X className="w-6 h-6" />
+                <X className="w-5 h-5" />
               </button>
               
               <div className="text-center space-y-4">
-                <h3 className="text-xl font-bold">Sinal de Agendamento</h3>
-                <p className="text-sm text-muted-foreground">
-                  Para confirmar seu horário, pedimos um sinal de <strong>R$ {SINAL_VALUE},00</strong> via Pix. O valor será descontado do total do serviço.
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-full text-xs font-semibold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  Sinal Obrigatório de Reserva
+                </div>
+
+                <h3 className="text-xl font-bold">Pague o Sinal via Pix</h3>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Para garantir a reserva do seu horário exclusivo, realize o pagamento do sinal de <strong className="text-foreground">R$ {SINAL_VALUE},00</strong>. Esse valor será abatido no total do seu atendimento.
                 </p>
 
-                <div className="bg-white p-4 rounded-2xl mx-auto inline-block card-shadow">
+                {/* QR Code */}
+                <div className="bg-white p-3 rounded-2xl mx-auto inline-block card-shadow border border-border">
                   <img 
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${PIX_KEY}`} 
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(PIX_KEY)}`} 
                     alt="QR Code Pix"
-                    className="w-40 h-40"
+                    className="w-36 h-36 mx-auto"
                   />
                 </div>
 
-                <div className="bg-secondary/50 p-4 rounded-xl border border-border flex flex-col items-center gap-3">
-                  <p className="text-xs font-mono text-muted-foreground break-all px-2 text-center line-clamp-3">
-                    {PIX_KEY}
+                {/* Chave Pix e Dados */}
+                <div className="bg-secondary/60 p-3.5 rounded-xl border border-border text-left space-y-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-muted-foreground">Favorecida:</span>
+                    <span className="font-semibold text-foreground">Klarissa Hemanuely Sabino</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-muted-foreground">Valor do Sinal:</span>
+                    <span className="font-mono font-bold text-emerald-400">R$ {SINAL_VALUE},00</span>
+                  </div>
+                  <div className="pt-2 border-t border-border/50">
+                    <p className="text-[10px] font-mono text-muted-foreground break-all mb-2 select-all bg-background/50 p-2 rounded line-clamp-2">
+                      {PIX_KEY}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(PIX_KEY);
+                        setPixCopiado(true);
+                        setTimeout(() => setPixCopiado(false), 2500);
+                      }}
+                      className="px-4 py-2.5 bg-primary text-primary-foreground font-bold rounded-lg hover:bg-primary/90 transition-all text-xs w-full flex items-center justify-center gap-2 active:scale-95"
+                    >
+                      {pixCopiado ? '✓ Código Pix Copiado com Sucesso!' : '📋 Copiar Código Pix Copia e Cola'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Instruções amigáveis de envio */}
+                <div className="p-3 bg-primary/5 rounded-xl border border-primary/15 text-left text-xs space-y-1">
+                  <p className="font-semibold text-foreground flex items-center gap-1.5">
+                    📱 Como funciona a confirmação:
                   </p>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(PIX_KEY);
-                      setPixCopiado(true);
-                      setTimeout(() => setPixCopiado(false), 2000);
-                    }}
-                    className="px-4 py-2 bg-primary/10 text-primary font-bold rounded-lg hover:bg-primary/20 transition-colors text-sm w-full"
-                  >
-                    {pixCopiado ? '✓ Chave Copiada!' : 'Copiar Chave Pix Copia e Cola'}
-                  </button>
-                </div>
-
-                <div className="text-left space-y-2 mt-6">
-                  <label className="block text-xs uppercase tracking-widest text-muted-foreground">Envie o Comprovante</label>
-                  <input 
-                    type="file" 
-                    accept="image/*"
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        setComprovanteFile(e.target.files[0]);
-                        setComprovanteError('');
-                      }
-                    }}
-                    className="w-full text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 transition-all cursor-pointer"
-                  />
-                  {comprovanteError && <p className="text-destructive text-xs font-medium">⚠️ {comprovanteError}</p>}
+                  <p className="text-muted-foreground text-[11px] leading-relaxed">
+                    1. Pague o sinal no app do seu banco.<br/>
+                    2. Clique no botão abaixo para abrir o WhatsApp da Klarissa.<br/>
+                    3. Envie a mensagem e o print do comprovante direto na conversa!
+                  </p>
                 </div>
 
                 <button
-                  onClick={handlePixSubmit}
-                  disabled={isUploading}
-                  className="w-full mt-4 py-4 bg-primary text-primary-foreground font-bold rounded-xl glow-shadow disabled:opacity-50 disabled:cursor-not-allowed transition-all active:scale-[0.98]"
+                  type="button"
+                  onClick={finishBookingFlow}
+                  disabled={isSubmitting}
+                  className="w-full mt-2 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl glow-shadow transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-sm shadow-[0_0_20px_rgba(16,185,129,0.3)] disabled:opacity-50"
                 >
-                  {isUploading ? (
+                  {isSubmitting ? (
                     <span className="flex items-center justify-center gap-2">
-                      <div className="w-4 h-4 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin" />
-                      Enviando...
+                      <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                      Reservando horário...
                     </span>
                   ) : (
-                    'Confirmar Agendamento'
+                    <>
+                      <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                        <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981z"/>
+                      </svg>
+                      Já paguei! Confirmar no WhatsApp
+                    </>
                   )}
                 </button>
               </div>
