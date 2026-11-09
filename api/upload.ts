@@ -32,6 +32,8 @@ export default async function handler(req: any, res: any) {
     const buffer = Buffer.from(cleanBase64, 'base64');
     const safeFilename = filename || `comprovante-${Date.now()}.jpg`;
 
+    const customUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
     // Provedor 1: Catbox.moe (Hospedagem Permanente Gratuita e Ultrarrápida)
     try {
       const formData = new FormData();
@@ -41,6 +43,7 @@ export default async function handler(req: any, res: any) {
 
       const catboxRes = await fetch('https://catbox.moe/user/api.php', {
         method: 'POST',
+        headers: { 'User-Agent': customUA },
         body: formData,
       });
 
@@ -54,7 +57,30 @@ export default async function handler(req: any, res: any) {
       console.warn('Catbox provider failed, attempting fallback...', e1);
     }
 
-    // Provedor 2: Litterbox (Fallback 72h)
+    // Provedor 2: Tmpfiles.org (Instantâneo e Altíssima Disponibilidade)
+    try {
+      const formTmp = new FormData();
+      const blobTmp = new Blob([buffer], { type: 'image/jpeg' });
+      formTmp.append('file', blobTmp, safeFilename);
+
+      const tmpRes = await fetch('https://tmpfiles.org/api/v1/upload', {
+        method: 'POST',
+        headers: { 'User-Agent': customUA },
+        body: formTmp,
+      });
+
+      if (tmpRes.ok) {
+        const tmpJson = await tmpRes.json();
+        if (tmpJson?.data?.url) {
+          const directUrl = tmpJson.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
+          return res.status(200).json({ success: true, url: directUrl });
+        }
+      }
+    } catch (eTmp) {
+      console.warn('Tmpfiles provider failed, attempting fallback...', eTmp);
+    }
+
+    // Provedor 3: Litterbox (Fallback 72h)
     try {
       const formData2 = new FormData();
       formData2.append('reqtype', 'fileupload');
@@ -64,6 +90,7 @@ export default async function handler(req: any, res: any) {
 
       const litterRes = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
         method: 'POST',
+        headers: { 'User-Agent': customUA },
         body: formData2,
       });
 
