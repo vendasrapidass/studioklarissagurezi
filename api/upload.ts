@@ -34,6 +34,11 @@ export default async function handler(req: any, res: any) {
 
     const customUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
+    let errCatbox = '';
+    let errTmp = '';
+    let errLitter = '';
+    let errImgur = '';
+
     // Provedor 1: Catbox.moe (Hospedagem Permanente Gratuita e Ultrarrápida)
     try {
       const formData = new FormData();
@@ -51,9 +56,14 @@ export default async function handler(req: any, res: any) {
         const url = (await catboxRes.text()).trim();
         if (url && url.startsWith('http')) {
           return res.status(200).json({ success: true, url });
+        } else {
+          errCatbox = `Status 200 but body: ${url.slice(0, 100)}`;
         }
+      } else {
+        errCatbox = `HTTP ${catboxRes.status}: ${(await catboxRes.text()).slice(0, 100)}`;
       }
-    } catch (e1) {
+    } catch (e1: any) {
+      errCatbox = e1?.message || String(e1);
       console.warn('Catbox provider failed, attempting fallback...', e1);
     }
 
@@ -74,9 +84,14 @@ export default async function handler(req: any, res: any) {
         if (tmpJson?.data?.url) {
           const directUrl = tmpJson.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
           return res.status(200).json({ success: true, url: directUrl });
+        } else {
+          errTmp = `No url in json: ${JSON.stringify(tmpJson).slice(0, 100)}`;
         }
+      } else {
+        errTmp = `HTTP ${tmpRes.status}: ${(await tmpRes.text()).slice(0, 100)}`;
       }
-    } catch (eTmp) {
+    } catch (eTmp: any) {
+      errTmp = eTmp?.message || String(eTmp);
       console.warn('Tmpfiles provider failed, attempting fallback...', eTmp);
     }
 
@@ -98,13 +113,18 @@ export default async function handler(req: any, res: any) {
         const url = (await litterRes.text()).trim();
         if (url && url.startsWith('http')) {
           return res.status(200).json({ success: true, url });
+        } else {
+          errLitter = `Body: ${url.slice(0, 100)}`;
         }
+      } else {
+        errLitter = `HTTP ${litterRes.status}: ${(await litterRes.text()).slice(0, 100)}`;
       }
-    } catch (e2) {
+    } catch (e2: any) {
+      errLitter = e2?.message || String(e2);
       console.warn('Litterbox provider failed, attempting fallback...', e2);
     }
 
-    // Provedor 3: Imgur como último recurso
+    // Provedor 4: Imgur como último recurso
     try {
       const imgurForm = new FormData();
       imgurForm.append('image', cleanBase64);
@@ -119,12 +139,18 @@ export default async function handler(req: any, res: any) {
       const imgurData = await imgurRes.json().catch(() => ({}));
       if (imgurData.success && imgurData.data?.link) {
         return res.status(200).json({ success: true, url: imgurData.data.link });
+      } else {
+        errImgur = `HTTP ${imgurRes.status}: ${JSON.stringify(imgurData).slice(0, 100)}`;
       }
-    } catch (e3) {
+    } catch (e3: any) {
+      errImgur = e3?.message || String(e3);
       console.warn('Imgur provider fallback failed...', e3);
     }
 
-    return res.status(500).json({ error: 'Não foi possível hospedar a imagem no momento.' });
+    return res.status(500).json({
+      error: 'Não foi possível hospedar a imagem no momento.',
+      debug: { errCatbox, errTmp, errLitter, errImgur }
+    });
   } catch (error: any) {
     console.error('Upload Error:', error);
     return res.status(500).json({ error: error.message || 'Erro ao processar imagem' });
