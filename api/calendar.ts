@@ -18,8 +18,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 );
 
-// ID da agenda oficial provisionada para o estúdio
+// ID da agenda oficial provisionada para o estúdio e e-mail da profissional
 const DEFAULT_STUDIO_CALENDAR_ID = '24283cd68ba66c84fb7927560352d4e5d5a4e0e71526527976af2a6557c1c1ac@group.calendar.google.com';
+const DEFAULT_PROFESSIONAL_EMAIL = process.env.PROFESSIONAL_EMAIL || 'Khemanuely@gmail.com';
 
 // Cache dinâmico em memória para o Calendar ID
 let cachedCalendarId: string | null = null;
@@ -432,12 +433,27 @@ export default async function handler(req: any, res: any) {
         // 1. CRIAR NO GOOGLE CALENDAR PRIMEIRO (Prioridade Máxima)
         const title = `${booking.service} - ${booking.name}`;
         const description = `Cliente: ${booking.name}\nContato: ${booking.phone}\nValor: R$ ${booking.price},00`;
+        const professionalEmail = (req.body?.professionalEmail as string) || (req.headers?.['x-professional-email'] as string) || DEFAULT_PROFESSIONAL_EMAIL;
 
         const insertPayload: any = {
           summary: title,
           description,
           start: { dateTime: startDateTime, timeZone: 'America/Sao_Paulo' },
           end: { dateTime: endDateTime, timeZone: 'America/Sao_Paulo' },
+          attendees: professionalEmail ? [
+            {
+              email: professionalEmail,
+              displayName: 'Studio Klarissa Guarezi',
+              responseStatus: 'accepted',
+            }
+          ] : undefined,
+          reminders: {
+            useDefault: false,
+            overrides: [
+              { method: 'popup', minutes: 60 },
+              { method: 'popup', minutes: 15 },
+            ],
+          },
           extendedProperties: {
             shared: {
               id,
@@ -462,6 +478,7 @@ export default async function handler(req: any, res: any) {
         try {
           insertedEvent = await calendar.events.insert({
             calendarId: activeCalendarId,
+            sendUpdates: 'all',
             requestBody: insertPayload,
           });
         } catch (insertErr: any) {
@@ -469,12 +486,14 @@ export default async function handler(req: any, res: any) {
             activeCalendarId = DEFAULT_STUDIO_CALENDAR_ID;
             insertedEvent = await calendar.events.insert({
               calendarId: activeCalendarId,
+              sendUpdates: 'all',
               requestBody: insertPayload,
             });
           } else if (insertPayload.id) {
             delete insertPayload.id;
             insertedEvent = await calendar.events.insert({
               calendarId: activeCalendarId,
+              sendUpdates: 'all',
               requestBody: insertPayload,
             });
           } else {
@@ -623,12 +642,28 @@ export default async function handler(req: any, res: any) {
         const title = `${booking.service} - ${booking.name}${suffix}`;
         const description = `Cliente: ${booking.name}\nContato: ${booking.phone}\nValor: R$ ${booking.price},00`;
 
+        const professionalEmail = (req.body?.professionalEmail as string) || (req.headers?.['x-professional-email'] as string) || DEFAULT_PROFESSIONAL_EMAIL;
+
         // 1. Atualizar no Google Calendar de forma ultra resiliente
-        const updatePayload = {
+        const updatePayload: any = {
           summary: title,
           description,
           start: { dateTime: startDateTime, timeZone: 'America/Sao_Paulo' },
           end: { dateTime: endDateTime, timeZone: 'America/Sao_Paulo' },
+          attendees: professionalEmail ? [
+            {
+              email: professionalEmail,
+              displayName: 'Studio Klarissa Guarezi',
+              responseStatus: 'accepted',
+            }
+          ] : undefined,
+          reminders: {
+            useDefault: false,
+            overrides: [
+              { method: 'popup', minutes: 60 },
+              { method: 'popup', minutes: 15 },
+            ],
+          },
           extendedProperties: {
             shared: {
               id,
@@ -649,6 +684,7 @@ export default async function handler(req: any, res: any) {
           await calendar.events.update({
             calendarId: activeCalendarId,
             eventId,
+            sendUpdates: 'all',
             requestBody: updatePayload,
           });
           updated = true;
@@ -671,6 +707,7 @@ export default async function handler(req: any, res: any) {
               await calendar.events.update({
                 calendarId: activeCalendarId,
                 eventId: existing.id,
+                sendUpdates: 'all',
                 requestBody: updatePayload,
               });
               updated = true;
