@@ -18,13 +18,16 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 );
 
+// ID da agenda oficial provisionada para o estúdio
+const DEFAULT_STUDIO_CALENDAR_ID = '24283cd68ba66c84fb7927560352d4e5d5a4e0e71526527976af2a6557c1c1ac@group.calendar.google.com';
+
 // Cache dinâmico em memória para o Calendar ID
 let cachedCalendarId: string | null = null;
 let lastCalendarIdFetch = 0;
 
 // Função para buscar o ID da agenda dinâmica do estúdio com timeout seguro
 async function getDynamicCalendarId(): Promise<string> {
-  const fallback = process.env.GOOGLE_CALENDAR_ID || 'guilhermesuzena10@gmail.com';
+  const fallback = process.env.GOOGLE_CALENDAR_ID || DEFAULT_STUDIO_CALENDAR_ID;
   if (cachedCalendarId && Date.now() - lastCalendarIdFetch < 10 * 60 * 1000) {
     return cachedCalendarId;
   }
@@ -137,14 +140,31 @@ export default async function handler(req: any, res: any) {
       const timeMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
       const timeMax = new Date(now.getFullYear(), now.getMonth() + 3, 1).toISOString();
 
-      // Consultar Google Calendar diretamente como fonte soberana
-      const response = await calendar.events.list({
-        calendarId: activeCalendarId,
-        timeMin,
-        timeMax,
-        singleEvents: true,
-        orderBy: 'startTime',
-      });
+      // Consultar Google Calendar diretamente como fonte soberana com fallback automático
+      let response;
+      try {
+        response = await calendar.events.list({
+          calendarId: activeCalendarId,
+          timeMin,
+          timeMax,
+          singleEvents: true,
+          orderBy: 'startTime',
+        });
+      } catch (listErr: any) {
+        if ((listErr?.code === 404 || listErr?.message?.includes('Not Found')) && activeCalendarId !== DEFAULT_STUDIO_CALENDAR_ID) {
+          console.warn(`Calendar ${activeCalendarId} not accessible, falling back to ${DEFAULT_STUDIO_CALENDAR_ID}`);
+          activeCalendarId = DEFAULT_STUDIO_CALENDAR_ID;
+          response = await calendar.events.list({
+            calendarId: activeCalendarId,
+            timeMin,
+            timeMax,
+            singleEvents: true,
+            orderBy: 'startTime',
+          });
+        } else {
+          throw listErr;
+        }
+      }
 
       const events = response.data.items || [];
       const bookings: any[] = [];
@@ -445,7 +465,13 @@ export default async function handler(req: any, res: any) {
             requestBody: insertPayload,
           });
         } catch (insertErr: any) {
-          if (insertPayload.id) {
+          if ((insertErr?.code === 404 || insertErr?.message?.includes('Not Found')) && activeCalendarId !== DEFAULT_STUDIO_CALENDAR_ID) {
+            activeCalendarId = DEFAULT_STUDIO_CALENDAR_ID;
+            insertedEvent = await calendar.events.insert({
+              calendarId: activeCalendarId,
+              requestBody: insertPayload,
+            });
+          } else if (insertPayload.id) {
             delete insertPayload.id;
             insertedEvent = await calendar.events.insert({
               calendarId: activeCalendarId,
@@ -515,27 +541,41 @@ export default async function handler(req: any, res: any) {
           end = { dateTime: endDateTime, timeZone: 'America/Sao_Paulo' };
         }
 
-        await calendar.events.insert({
-          calendarId: activeCalendarId,
-          requestBody: {
-            id: eventId,
-            summary: title,
-            description: `Bloqueio de Agenda\nMotivo: ${block.reason || 'Indisponível'}`,
-            start,
-            end,
-            extendedProperties: {
-              shared: {
-                id,
-                type: 'block',
-                reason: block.reason || 'Indisponível',
-                date: block.date,
-                allDay: String(block.allDay),
-                start: block.start || '',
-                end: block.end || '',
-              },
+        const blockRequestBody = {
+          id: eventId,
+          summary: title,
+          description: `Bloqueio de Agenda\nMotivo: ${block.reason || 'Indisponível'}`,
+          start,
+          end,
+          extendedProperties: {
+            shared: {
+              id,
+              type: 'block',
+              reason: block.reason || 'Indisponível',
+              date: block.date,
+              allDay: String(block.allDay),
+              start: block.start || '',
+              end: block.end || '',
             },
           },
-        });
+        };
+
+        try {
+          await calendar.events.insert({
+            calendarId: activeCalendarId,
+            requestBody: blockRequestBody,
+          });
+        } catch (blockErr: any) {
+          if ((blockErr?.code === 404 || blockErr?.message?.includes('Not Found')) && activeCalendarId !== DEFAULT_STUDIO_CALENDAR_ID) {
+            activeCalendarId = DEFAULT_STUDIO_CALENDAR_ID;
+            await calendar.events.insert({
+              calendarId: activeCalendarId,
+              requestBody: blockRequestBody,
+            });
+          } else {
+            throw blockErr;
+          }
+        }
 
         // 2. Espelhar no Supabase
         try {

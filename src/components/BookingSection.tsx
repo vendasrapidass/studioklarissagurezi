@@ -30,8 +30,10 @@ const BookingSection = () => {
   const [showPixModal, setShowPixModal] = useState(false);
   const [pixCopiado, setPixCopiado] = useState(false);
   
-  // Estados de Upload do Comprovante (opcional, sem bloquear)
+  // Estados de Upload do Comprovante
   const [comprovanteFile, setComprovanteFile] = useState<File | null>(null);
+  const [comprovantePreview, setComprovantePreview] = useState<string>('');
+  const [isUploading, setIsUploading] = useState(false);
   const [comprovanteError, setComprovanteError] = useState('');
 
   const totalDuration = useMemo(() => {
@@ -226,13 +228,99 @@ const BookingSection = () => {
     setStep(4);
   };
 
+  const compressAndGetBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 1200;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(e.target?.result as string || '');
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        };
+        img.onerror = () => resolve(e.target?.result as string || '');
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setComprovanteFile(file);
+      setComprovanteError('');
+      try {
+        const base64 = await compressAndGetBase64(file);
+        setComprovantePreview(base64);
+      } catch (err) {
+        console.warn('Preview error:', err);
+      }
+    }
+  };
+
   const handleConfirm = () => {
     if (!name.trim() || !phone.trim() || !selectedService || !selectedDate || !selectedTime) return;
-    // Sinal obrigatório para todas as clientes
     setShowPixModal(true);
   };
 
-  const finishBookingFlow = () => {
+  const handlePixSubmit = async () => {
+    if (!comprovanteFile && !comprovantePreview) {
+      setComprovanteError('O comprovante é obrigatório para confirmar o agendamento.');
+      return;
+    }
+
+    setIsUploading(true);
+    let comprovanteUrl = '';
+
+    try {
+      let base64 = comprovantePreview;
+      if (!base64 && comprovanteFile) {
+        base64 = await compressAndGetBase64(comprovanteFile);
+      }
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: base64,
+          filename: comprovanteFile?.name || 'comprovante.jpg',
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.url) {
+          comprovanteUrl = data.url;
+        }
+      }
+    } catch (err) {
+      console.warn('Upload error, fallback gracefully:', err);
+    } finally {
+      setIsUploading(false);
+    }
+
+    finishBookingFlow(comprovanteUrl);
+  };
+
+  const finishBookingFlow = async (comprovanteUrl?: string) => {
     if (!selectedDate || !selectedTime || !name.trim()) return;
     const dateStr = format(selectedDate, 'dd/MM/yyyy');
     const booking = {
@@ -251,36 +339,41 @@ const BookingSection = () => {
     // 1. Salva imediatamente no banco local (garante que não se perde)
     addBooking(booking);
 
-    // 2. Prepara mensagem para o WhatsApp com todos os detalhes e comprovante
-    const msg = `✨ *STUDIO KLARISSA GUAREZI* ✨\n\nOlá Klarissa! 🌸\nMeu nome é *${booking.name}*.\nAcabei de realizar meu agendamento pelo site:\n\n📋 *Serviço:* ${booking.service}\n💰 *Valor:* R$ ${booking.price},00\n📅 *Data:* ${booking.date}\n🕐 *Horário:* ${booking.time}\n📱 *Meu WhatsApp:* ${booking.phone}\n\n💵 *Sinal de R$ ${SINAL_VALUE},00 realizado via Pix!*\n🧾 *Estou enviando o comprovante aqui no anexo:*`;
+    // 2. Prepara mensagem para o WhatsApp com link oficial do comprovante
+    let msg = `✨ *STUDIO KLARISSA GUAREZI* ✨\n\nOlá Klarissa! 🌸\nMeu nome é *${booking.name}*.\nAcabei de realizar meu agendamento pelo site:\n\n📋 *Serviço:* ${booking.service}\n💰 *Valor:* R$ ${booking.price},00\n📅 *Data:* ${booking.date}\n🕐 *Horário:* ${booking.time}\n📱 *Meu WhatsApp:* ${booking.phone}\n\n💵 *Sinal Pago:* R$ ${SINAL_VALUE},00`;
+
+    if (comprovanteUrl) {
+      msg += `\n\n🧾 *Comprovante do Sinal:*\n${comprovanteUrl}`;
+    }
+
+    msg += `\n\nObrigado! 💕`;
 
     const zapUrl = generateWhatsAppUrl(WHATSAPP_NUMBER, msg);
     setLastWhatsAppUrl(zapUrl);
 
-    // 3. Sincroniza em paralelo com o Google Calendar sem travar o redirecionamento
-    fetch('/api/calendar', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        type: 'booking',
-        booking,
-        duration: totalDuration,
-      }),
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          console.warn("Google Calendar sync status:", res.status);
-        } else {
-          console.log("Booking successfully synced to Google Calendar!");
-        }
-      })
-      .catch((err) => {
-        console.warn("Background Google Calendar sync error:", err);
+    // 3. Sincroniza com o Google Calendar garantindo que seja registrado antes do redirecionamento
+    try {
+      const calendarPromise = fetch('/api/calendar', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'booking',
+          booking,
+          duration: totalDuration,
+        }),
+        keepalive: true,
       });
 
-    // 4. Conclui o fluxo e abre o WhatsApp imediatamente
+      // Aguarda até 2.5s para a criação no Google Calendar
+      const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 2500));
+      await Promise.race([calendarPromise, timeoutPromise]);
+    } catch (err) {
+      console.warn("Background Google Calendar sync error:", err);
+    }
+
+    // 4. Conclui o fluxo e abre o WhatsApp
     setIsSubmitting(false);
     setShowPixModal(false);
     setShowSuccess(true);
@@ -300,6 +393,7 @@ const BookingSection = () => {
     setName('');
     setPhone('');
     setComprovanteFile(null);
+    setComprovantePreview('');
     setComprovanteError('');
   };
 
@@ -638,36 +732,51 @@ const BookingSection = () => {
                   </div>
                 </div>
 
-                {/* Instruções amigáveis de envio */}
-                <div className="p-3 bg-primary/5 rounded-xl border border-primary/15 text-left text-xs space-y-1">
-                  <p className="font-semibold text-foreground flex items-center gap-1.5">
-                    📱 Como funciona a confirmação:
-                  </p>
-                  <p className="text-muted-foreground text-[11px] leading-relaxed">
-                    1. Pague o sinal no app do seu banco.<br/>
-                    2. Clique no botão abaixo para abrir o WhatsApp da Klarissa.<br/>
-                    3. Envie a mensagem e o print do comprovante direto na conversa!
-                  </p>
+                {/* Área de Anexo do Comprovante */}
+                <div className="text-left space-y-2 mt-4 pt-3 border-t border-border/50">
+                  <label className="block text-xs uppercase tracking-widest text-muted-foreground font-semibold">
+                    Envie o Comprovante
+                  </label>
+                  
+                  <div className="flex items-center gap-3">
+                    <label className="px-4 py-2.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-xl text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-2 flex-shrink-0">
+                      <span>Escolher Arquivo</span>
+                      <input 
+                        type="file" 
+                        accept="image/*"
+                        onChange={handleFileChange}
+                        className="hidden"
+                      />
+                    </label>
+                    
+                    {comprovanteFile ? (
+                      <div className="flex items-center gap-2 text-xs text-emerald-400 font-medium truncate flex-1 bg-secondary/40 p-1.5 rounded-lg border border-emerald-500/20">
+                        {comprovantePreview && (
+                          <img src={comprovantePreview} alt="Preview" className="w-7 h-7 rounded object-cover border border-emerald-500/40" />
+                        )}
+                        <span className="truncate">{comprovanteFile.name}</span>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground/60 italic truncate">Nenhum arquivo selecionado</span>
+                    )}
+                  </div>
+
+                  {comprovanteError && <p className="text-destructive text-xs font-medium">⚠️ {comprovanteError}</p>}
                 </div>
 
                 <button
                   type="button"
-                  onClick={finishBookingFlow}
-                  disabled={isSubmitting}
-                  className="w-full mt-2 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl glow-shadow transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-sm shadow-[0_0_20px_rgba(16,185,129,0.3)] disabled:opacity-50"
+                  onClick={handlePixSubmit}
+                  disabled={isSubmitting || isUploading}
+                  className="w-full mt-3 py-4 bg-primary text-primary-foreground font-bold rounded-xl glow-shadow transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-sm shadow-[0_0_20px_rgba(255,255,255,0.1)] disabled:opacity-50"
                 >
-                  {isSubmitting ? (
+                  {isUploading || isSubmitting ? (
                     <span className="flex items-center justify-center gap-2">
-                      <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                      Reservando horário...
+                      <div className="w-4 h-4 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin" />
+                      Enviando comprovante...
                     </span>
                   ) : (
-                    <>
-                      <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
-                        <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981z"/>
-                      </svg>
-                      Já paguei! Confirmar no WhatsApp
-                    </>
+                    'Confirmar Agendamento'
                   )}
                 </button>
               </div>
