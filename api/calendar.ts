@@ -116,6 +116,56 @@ const timeToMinutes = (t: string) => {
   return (h || 0) * 60 + (mi || 0);
 };
 
+// Converte com segurança qualquer formato de data para YYYY-MM-DD (ISO)
+export function toIsoDate(dateStr: string): string {
+  if (!dateStr || typeof dateStr !== 'string') return '';
+  const trimmed = dateStr.trim();
+  if (trimmed.includes('T')) return trimmed.split('T')[0];
+  if (trimmed.includes('/')) {
+    const parts = trimmed.split('/');
+    if (parts.length >= 3) {
+      if (parts[0].length === 4) {
+        return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+      }
+      return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+  }
+  if (trimmed.includes('-')) {
+    const parts = trimmed.split('-');
+    if (parts.length >= 3) {
+      if (parts[0].length === 4) return trimmed.slice(0, 10);
+      return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+  }
+  return trimmed;
+}
+
+// Converte com segurança qualquer formato de data para DD/MM/YYYY (Padrão BR)
+export function toBrazilianDate(dateStr: string): string {
+  if (!dateStr || typeof dateStr !== 'string') return '';
+  const trimmed = dateStr.trim();
+  const clean = trimmed.includes('T') ? trimmed.split('T')[0] : trimmed;
+  if (clean.includes('-')) {
+    const parts = clean.split('-');
+    if (parts.length >= 3) {
+      if (parts[0].length === 4) {
+        return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+      }
+      return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[2]}`;
+    }
+  }
+  if (clean.includes('/')) {
+    const parts = clean.split('/');
+    if (parts.length >= 3) {
+      if (parts[0].length === 4) {
+        return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+      }
+      return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[2]}`;
+    }
+  }
+  return clean;
+}
+
 export default async function handler(req: any, res: any) {
   // CORS & Cache Headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -137,9 +187,9 @@ export default async function handler(req: any, res: any) {
     // ----------------------------------------------------
     if (req.method === 'GET') {
       const now = new Date();
-      // Período de busca padrão: de 30 dias atrás até 90 dias no futuro
-      const timeMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
-      const timeMax = new Date(now.getFullYear(), now.getMonth() + 3, 1).toISOString();
+      // Período de busca expandido: desde 2024 até o próximo ano para faturamento anual e histórico completo
+      const timeMin = new Date(2024, 0, 1).toISOString();
+      const timeMax = new Date(now.getFullYear() + 1, 11, 31, 23, 59, 59).toISOString();
 
       // Consultar Google Calendar diretamente como fonte soberana com fallback automático
       let response;
@@ -333,8 +383,7 @@ export default async function handler(req: any, res: any) {
               timeVal = parsed.time;
             }
           } else if (event.start?.date) {
-            const [y, m, d] = event.start.date.split('-');
-            dateVal = `${d}/${m}/${y}`;
+            dateVal = toBrazilianDate(event.start.date);
             timeVal = '08:00';
           }
 
@@ -349,7 +398,7 @@ export default async function handler(req: any, res: any) {
             googleEventId: event.id,
             service,
             price,
-            date: shared?.date || dateVal,
+            date: toBrazilianDate(shared?.date || dateVal),
             time: shared?.time || timeVal,
             name,
             phone,
@@ -377,8 +426,8 @@ export default async function handler(req: any, res: any) {
         const id = booking.id;
         const eventId = id.replace(/-/g, '').toLowerCase();
 
-        const [d, m, y] = booking.date.split('/');
-        const isoDate = `${y}-${m}-${d}`;
+        const isoDate = toIsoDate(booking.date);
+        const brDate = toBrazilianDate(booking.date);
         const startDateTime = `${isoDate}T${booking.time}:00-03:00`;
 
         const startMs = new Date(startDateTime).getTime();
@@ -451,6 +500,7 @@ export default async function handler(req: any, res: any) {
             {
               email: professionalEmail,
               displayName: 'Studio Klarissa Guarezi',
+              responseStatus: 'accepted',
             }
           ] : undefined,
           reminders: {
@@ -469,7 +519,7 @@ export default async function handler(req: any, res: any) {
               phone: booking.phone,
               price: String(booking.price),
               status: booking.status || 'accepted',
-              date: booking.date,
+              date: brDate,
               time: booking.time,
             },
           },
@@ -484,11 +534,29 @@ export default async function handler(req: any, res: any) {
         try {
           insertedEvent = await calendar.events.insert({
             calendarId: activeCalendarId,
+            sendUpdates: 'all',
             requestBody: insertPayload,
           });
         } catch (insertErr: any) {
-          console.warn("Google Calendar primary insert error:", insertErr?.message || insertErr);
-          if ((insertErr?.code === 404 || insertErr?.message?.includes('Not Found')) && activeCalendarId !== DEFAULT_STUDIO_CALENDAR_ID) {
+          console.warn("Google Calendar primary insert error (trying fallback):", insertErr?.message || insertErr);
+          // Fallback: tenta sem sendUpdates e sem responseStatus se o Google recusar
+          try {
+            const safePayload = { ...insertPayload };
+            if (safePayload.attendees) {
+              safePayload.attendees = safePayload.attendees.map((a: any) => ({
+                email: a.email,
+                displayName: a.displayName,
+              }));
+            }
+            insertedEvent = await calendar.events.insert({
+              calendarId: activeCalendarId,
+              requestBody: safePayload,
+            });
+          } catch (retrySafeErr: any) {
+            console.warn("Safe insert retry failed:", retrySafeErr?.message || retrySafeErr);
+          }
+
+          if (!insertedEvent && (insertErr?.code === 404 || insertErr?.message?.includes('Not Found')) && activeCalendarId !== DEFAULT_STUDIO_CALENDAR_ID) {
             activeCalendarId = DEFAULT_STUDIO_CALENDAR_ID;
             try {
               insertedEvent = await calendar.events.insert({
@@ -553,8 +621,8 @@ export default async function handler(req: any, res: any) {
         const bId = b.id;
         const bEventId = bId.replace(/-/g, '').toLowerCase();
 
-        const [d, m, y] = b.date.split('/');
-        const isoDate = `${y}-${m}-${d}`;
+        const isoDate = toIsoDate(b.date);
+        const brDate = toBrazilianDate(b.date);
 
         let startDateTime: string;
         let endDateTime: string;
@@ -575,7 +643,8 @@ export default async function handler(req: any, res: any) {
 
         if (b.allDay) {
           start = { date: isoDate };
-          const dateObj = new Date(Number(y), Number(m) - 1, Number(d));
+          const [y, m, d] = isoDate.split('-').map(Number);
+          const dateObj = new Date(y, m - 1, d);
           dateObj.setDate(dateObj.getDate() + 1);
           const pad = (n: number) => String(n).padStart(2, '0');
           const nextDayStr = `${dateObj.getFullYear()}-${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())}`;
@@ -595,7 +664,7 @@ export default async function handler(req: any, res: any) {
               id: bId,
               type: 'block',
               reason: b.reason || 'Indisponível',
-              date: b.date,
+              date: brDate,
               allDay: String(b.allDay),
               start: b.start || '',
               end: b.end || '',
@@ -683,11 +752,13 @@ export default async function handler(req: any, res: any) {
     // ----------------------------------------------------
     if (req.method === 'PUT') {
       const { id, type, booking, block, duration } = req.body;
-      const eventId = id.replace(/-/g, '').toLowerCase();
+      const rawEventId = booking?.googleEventId || req.body?.googleEventId || id;
+      // Não forçar toLowerCase se for googleEventId (pois IDs do Google são sensíveis a maiúsculas)
+      const eventId = rawEventId ? rawEventId.replace(/-/g, '') : '';
 
       if (type === 'booking') {
-        const [d, m, y] = booking.date.split('/');
-        const isoDate = `${y}-${m}-${d}`;
+        const isoDate = toIsoDate(booking.date);
+        const brDate = toBrazilianDate(booking.date);
         const startDateTime = `${isoDate}T${booking.time}:00-03:00`;
 
         const startMs = new Date(startDateTime).getTime();
@@ -713,6 +784,7 @@ export default async function handler(req: any, res: any) {
             {
               email: professionalEmail,
               displayName: 'Studio Klarissa Guarezi',
+              responseStatus: 'accepted',
             }
           ] : undefined,
           reminders: {
@@ -731,7 +803,7 @@ export default async function handler(req: any, res: any) {
               phone: booking.phone,
               price: String(booking.price),
               status: booking.status,
-              date: booking.date,
+              date: brDate,
               time: booking.time,
             },
           },
@@ -742,35 +814,57 @@ export default async function handler(req: any, res: any) {
           await calendar.events.update({
             calendarId: activeCalendarId,
             eventId,
+            sendUpdates: 'all',
             requestBody: updatePayload,
           });
           updated = true;
         } catch (updateErr: any) {
           console.warn(`Update by eventId ${eventId} failed: ${updateErr?.message || updateErr}. Buscando evento na agenda...`);
+          // Fallback sem sendUpdates se o Google recusar
           try {
-            const dayStartIso = `${isoDate}T00:00:00-03:00`;
-            const dayEndIso = `${isoDate}T23:59:59-03:00`;
-            const searchRes = await calendar.events.list({
-              calendarId: activeCalendarId,
-              timeMin: new Date(dayStartIso).toISOString(),
-              timeMax: new Date(dayEndIso).toISOString(),
-              singleEvents: true,
-            });
-            const existing = (searchRes.data.items || []).find((ev: any) => {
-              if (ev.status === 'cancelled') return false;
-              const s = (ev.summary || '').toLowerCase();
-              return (booking.name && s.includes(booking.name.toLowerCase())) || ev.extendedProperties?.shared?.id === id;
-            });
-            if (existing && existing.id) {
-              await calendar.events.update({
-                calendarId: activeCalendarId,
-                eventId: existing.id,
-                requestBody: updatePayload,
-              });
-              updated = true;
+            const safePayload = { ...updatePayload };
+            if (safePayload.attendees) {
+              safePayload.attendees = safePayload.attendees.map((a: any) => ({
+                email: a.email,
+                displayName: a.displayName,
+              }));
             }
-          } catch (searchErr) {
-            console.warn("Fallback search in PUT error:", searchErr);
+            await calendar.events.update({
+              calendarId: activeCalendarId,
+              eventId,
+              requestBody: safePayload,
+            });
+            updated = true;
+          } catch (retrySafeErr) {
+            // Continua para busca
+          }
+
+          if (!updated) {
+            try {
+              const dayStartIso = `${isoDate}T00:00:00-03:00`;
+              const dayEndIso = `${isoDate}T23:59:59-03:00`;
+              const searchRes = await calendar.events.list({
+                calendarId: activeCalendarId,
+                timeMin: new Date(dayStartIso).toISOString(),
+                timeMax: new Date(dayEndIso).toISOString(),
+                singleEvents: true,
+              });
+              const existing = (searchRes.data.items || []).find((ev: any) => {
+                if (ev.status === 'cancelled') return false;
+                const s = (ev.summary || '').toLowerCase();
+                return (booking.name && s.includes(booking.name.toLowerCase())) || ev.extendedProperties?.shared?.id === id || ev.id === eventId;
+              });
+              if (existing && existing.id) {
+                await calendar.events.update({
+                  calendarId: activeCalendarId,
+                  eventId: existing.id,
+                  requestBody: updatePayload,
+                });
+                updated = true;
+              }
+            } catch (searchErr) {
+              console.warn("Fallback search in PUT error:", searchErr);
+            }
           }
         }
 
@@ -811,8 +905,8 @@ export default async function handler(req: any, res: any) {
       }
 
       if (type === 'block') {
-        const [d, m, y] = block.date.split('/');
-        const isoDate = `${y}-${m}-${d}`;
+        const isoDate = toIsoDate(block.date);
+        const brDate = toBrazilianDate(block.date);
 
         let startDateTime: string;
         let endDateTime: string;
@@ -833,7 +927,8 @@ export default async function handler(req: any, res: any) {
 
         if (block.allDay) {
           start = { date: isoDate };
-          const dateObj = new Date(Number(y), Number(m) - 1, Number(d));
+          const [y, m, d] = isoDate.split('-').map(Number);
+          const dateObj = new Date(y, m - 1, d);
           dateObj.setDate(dateObj.getDate() + 1);
           const pad = (n: number) => String(n).padStart(2, '0');
           const nextDayStr = `${dateObj.getFullYear()}-${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())}`;
@@ -856,7 +951,7 @@ export default async function handler(req: any, res: any) {
                 id,
                 type: 'block',
                 reason: block.reason,
-                date: block.date,
+                date: brDate,
                 allDay: String(block.allDay),
                 start: block.start || '',
                 end: block.end || '',
@@ -927,10 +1022,12 @@ export default async function handler(req: any, res: any) {
         try {
           let timeMin: string | undefined;
           let timeMax: string | undefined;
-          if (date && date.includes('/')) {
-            const [d, m, y] = date.split('/');
-            timeMin = new Date(`${y}-${m}-${d}T00:00:00-03:00`).toISOString();
-            timeMax = new Date(`${y}-${m}-${d}T23:59:59-03:00`).toISOString();
+          if (date) {
+            const iso = toIsoDate(date);
+            if (iso && iso.includes('-')) {
+              timeMin = new Date(`${iso}T00:00:00-03:00`).toISOString();
+              timeMax = new Date(`${iso}T23:59:59-03:00`).toISOString();
+            }
           }
 
           const searchRes = await calendar.events.list({

@@ -131,22 +131,80 @@ const AdminPanel = () => {
     return total || 180;
   };
 
-  const safeFormatDate = (dateStr: string): string => {
-    // Expects DD/MM/YYYY → YYYY-MM-DD
+  const toYYYYMMDD = (dateStr: string): string => {
     if (!dateStr || typeof dateStr !== 'string') return '';
-    const parts = dateStr.split('/');
-    if (parts.length < 3) return '';
-    const [d, m, y] = parts;
-    return `${y}-${m}-${d}`;
+    const trimmed = dateStr.trim();
+    if (trimmed.includes('T')) return trimmed.split('T')[0];
+    if (trimmed.includes('/')) {
+      const parts = trimmed.split('/');
+      if (parts.length >= 3) {
+        if (parts[0].length === 4) return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      }
+    }
+    if (trimmed.includes('-')) {
+      const parts = trimmed.split('-');
+      if (parts.length >= 3) {
+        if (parts[0].length === 4) return trimmed.slice(0, 10);
+        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      }
+    }
+    return trimmed;
   };
 
-  const safeDateToDisplay = (isoDate: string): string => {
-    // Expects YYYY-MM-DD → DD/MM/YYYY
-    if (!isoDate || typeof isoDate !== 'string') return '';
-    const parts = isoDate.split('-');
-    if (parts.length < 3) return isoDate;
-    const [y, m, d] = parts;
-    return `${d}/${m}/${y}`;
+  const toDDMMYYYY = (dateStr: string): string => {
+    if (!dateStr || typeof dateStr !== 'string') return '';
+    const trimmed = dateStr.trim();
+    const clean = trimmed.includes('T') ? trimmed.split('T')[0] : trimmed;
+    if (clean.includes('-')) {
+      const parts = clean.split('-');
+      if (parts.length >= 3) {
+        if (parts[0].length === 4) {
+          return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+        }
+        return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[2]}`;
+      }
+    }
+    if (clean.includes('/')) {
+      const parts = clean.split('/');
+      if (parts.length >= 3) {
+        if (parts[0].length === 4) {
+          return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+        }
+        return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[2]}`;
+      }
+    }
+    return clean;
+  };
+
+  const safeFormatDate = toYYYYMMDD;
+  const safeDateToDisplay = toDDMMYYYY;
+
+  const parseItemDate = (dateStr: string): Date | null => {
+    if (!dateStr || typeof dateStr !== 'string') return null;
+    const iso = toYYYYMMDD(dateStr);
+    if (!iso || !iso.includes('-')) return null;
+    const [y, m, d] = iso.split('-').map(Number);
+    if (isNaN(y) || isNaN(m) || isNaN(d)) return null;
+    return new Date(y, m - 1, d);
+  };
+
+  const getDeletedIds = (): Set<string> => {
+    try {
+      const stored = sessionStorage.getItem('stud_deleted_ids');
+      return new Set(stored ? JSON.parse(stored) : []);
+    } catch {
+      return new Set();
+    }
+  };
+
+  const markAsDeleted = (id?: string, googleEventId?: string) => {
+    try {
+      const set = getDeletedIds();
+      if (id) set.add(id);
+      if (googleEventId) set.add(googleEventId);
+      sessionStorage.setItem('stud_deleted_ids', JSON.stringify(Array.from(set)));
+    } catch {}
   };
 
   const maskDate = (raw: string): string => {
@@ -201,17 +259,19 @@ const AdminPanel = () => {
             return { ...b, price };
           };
 
+          const deletedIds = getDeletedIds();
+
           const activeFromApi = data.bookings
-            .filter((b: Booking) => b && b.status !== 'completed')
+            .filter((b: Booking) => b && b.status !== 'completed' && !deletedIds.has(b.id) && !deletedIds.has((b as any).googleEventId))
             .map(enrichBooking);
           const doneFromApi = data.bookings
-            .filter((b: Booking) => b && b.status === 'completed')
+            .filter((b: Booking) => b && b.status === 'completed' && !deletedIds.has(b.id) && !deletedIds.has((b as any).googleEventId))
             .map(enrichBooking);
 
-          // MERGE BIDIRECIONAL ATIVOS: preserva agendamentos locais (ex: Milena, Gabriella) e sincroniza para o Google Calendar
+          // MERGE BIDIRECIONAL ATIVOS: preserva agendamentos locais e sincroniza para o Google Calendar
           const mergedActive = [...activeFromApi];
           currentBookings.forEach(localB => {
-            if (!localB || localB.status === 'completed') return;
+            if (!localB || localB.status === 'completed' || deletedIds.has(localB.id) || deletedIds.has((localB as any).googleEventId)) return;
             // Se já foi finalizado localmente, não re-adiciona nos ativos
             const isDoneLocally = currentCompleted.some(cb => 
               cb.id === localB.id || 
@@ -225,23 +285,13 @@ const AdminPanel = () => {
             );
             if (!alreadyInApi) {
               mergedActive.push(localB);
-              // Auto-sincroniza com o Google Calendar em background para garantir cruzamento total
-              fetch('/api/calendar', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  type: 'booking',
-                  booking: localB,
-                  duration: getBookingDuration(localB.service)
-                })
-              }).catch(e => console.warn('Auto-sync to Google error:', e));
             }
           });
 
           // MERGE BIDIRECIONAL CONCLUÍDOS: preserva concluídos locais e da API sem perder histórico
           const mergedCompleted = [...doneFromApi];
           currentCompleted.forEach(loc => {
-            if (!loc) return;
+            if (!loc || deletedIds.has(loc.id) || deletedIds.has((loc as any).googleEventId)) return;
             const exists = mergedCompleted.some(d => 
               d.id === loc.id || 
               (d.name && loc.name && d.name.toLowerCase() === loc.name.toLowerCase() && d.date === loc.date)
@@ -257,8 +307,22 @@ const AdminPanel = () => {
           setCompleted(mergedCompleted);
         }
         if (Array.isArray(data.blocks)) {
-          saveBlocks(data.blocks);
-          setBlocks(data.blocks);
+          const currentBlocks = getBlocks();
+          const deletedIds = getDeletedIds();
+          const validApiBlocks = data.blocks.filter((bl: any) => bl && !deletedIds.has(bl.id) && !deletedIds.has(bl.googleEventId));
+          const mergedBlocks = [...validApiBlocks];
+          currentBlocks.forEach(lb => {
+            if (!lb || deletedIds.has(lb.id) || deletedIds.has((lb as any).googleEventId)) return;
+            const exists = mergedBlocks.some(mb => 
+              mb.id === lb.id || 
+              (mb.date === lb.date && mb.start === lb.start && mb.allDay === lb.allDay)
+            );
+            if (!exists) {
+              mergedBlocks.push(lb);
+            }
+          });
+          saveBlocks(mergedBlocks);
+          setBlocks(mergedBlocks);
         }
       })
       .catch(err => console.error('Google Calendar sync error:', err));
@@ -327,6 +391,7 @@ const AdminPanel = () => {
 
   const handleRefuse = (booking: Booking, reason: string) => {
     if (!booking) return;
+    markAsDeleted(booking.id, booking.googleEventId);
     const msg = `✨ *STUDIO KLARISSA GUAREZI* ✨\n\nOlá *${booking.name}*! 👋\n\nInfelizmente não poderemos atender seu agendamento. 😔\n\n📋 *Serviço:* ${booking.service}\n📅 *Data:* ${booking.date}\n🕐 *Horário:* ${booking.time}\n\n❌ *Motivo:* ${reason}\n\nPor favor, escolha outro horário disponível no nosso site. Desculpe pelo inconveniente! 🙏\n\nEstamos à disposição! 🌸`;
     if (booking.phone) { try { window.open(generateWhatsAppUrl(booking.phone, msg), '_blank'); } catch (e) { /* noop */ } }
     
@@ -355,6 +420,7 @@ const AdminPanel = () => {
   const handleConfirmCancel = () => {
     if (!cancellingBooking) return;
     const booking = cancellingBooking;
+    markAsDeleted(booking.id, booking.googleEventId);
     
     // 1. Remove do estado e storage local instantaneamente (Zero Lag)
     const updated = bookings.filter(b => b.id !== booking.id);
@@ -380,6 +446,7 @@ const AdminPanel = () => {
 
   const handleDeleteCompleted = (id: string) => {
     const item = completed.find(c => c.id === id) || bookings.find(b => b.id === id);
+    markAsDeleted(id, item?.googleEventId);
     try {
       removeCompleted(id);
       setCompleted(prev => prev.filter(c => c.id !== id));
@@ -449,11 +516,13 @@ const AdminPanel = () => {
     setEditingBooking(null);
 
     try {
+      const targetId = (editingBooking as any).googleEventId || editingBooking.id;
       const res = await fetch('/api/calendar', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: editingBooking.id,
+          id: targetId,
+          googleEventId: (editingBooking as any).googleEventId || editingBooking.id,
           type: 'booking',
           booking: updatedBooking,
           duration: getBookingDuration(updatedBooking.service),
@@ -642,6 +711,7 @@ const AdminPanel = () => {
 
   const handleDeleteBlock = (id: string) => {
     const targetBlock = blocks.find(b => b.id === id);
+    markAsDeleted(id, targetBlock?.googleEventId);
     try {
       removeBlock(id);
       setBlocks(prev => prev.filter(b => b.id !== id));
@@ -666,12 +736,9 @@ const AdminPanel = () => {
   const filteredCompleted = useMemo(() => {
     const now = new Date();
     return completed.filter(b => {
-      if (!b || !b.date || typeof b.date !== 'string') return false;
-      const parts = b.date.split('/');
-      if (parts.length < 3) return false;
-      const [d, m, y] = parts.map(Number);
-      if (isNaN(d) || isNaN(m) || isNaN(y)) return false;
-      const date = new Date(y, m - 1, d);
+      if (!b || !b.date) return false;
+      const date = parseItemDate(b.date);
+      if (!date) return false;
       switch (filter) {
         case 'today': return date.toDateString() === now.toDateString();
         case 'week': {
@@ -707,12 +774,12 @@ const AdminPanel = () => {
       if (subFilter !== 'all' && subFilter !== 'completed' && b.status !== subFilter) return;
       let timestamp = 0;
       try {
-        const parts = (b.date || '').split('/');
-        if (parts.length >= 3) {
-          const [d, m, y] = parts.map(Number);
+        const dObj = parseItemDate(b.date || '');
+        if (dObj) {
           const tParts = (b.time || '00:00').split(':');
           const [h, min] = tParts.length >= 2 ? tParts.map(Number) : [0, 0];
-          timestamp = new Date(y, m - 1, d, h, min).getTime() || 0;
+          dObj.setHours(h, min, 0, 0);
+          timestamp = dObj.getTime() || 0;
         }
       } catch { timestamp = 0; }
       items.push({ type: 'booking', id: b.id || generateUUID(), timestamp, raw: b });
@@ -723,15 +790,15 @@ const AdminPanel = () => {
         if (!bl) return;
         let timestamp = 0;
         try {
-          const parts = (bl.date || '').split('/');
-          if (parts.length >= 3) {
-            const [d, m, y] = parts.map(Number);
+          const dObj = parseItemDate(bl.date || '');
+          if (dObj) {
             let h = 0, min = 0;
             if (!bl.allDay && bl.start) {
               const sp = bl.start.split(':');
               if (sp.length >= 2) { h = Number(sp[0]); min = Number(sp[1]); }
             }
-            timestamp = new Date(y, m - 1, d, h, min).getTime() || 0;
+            dObj.setHours(h, min, 0, 0);
+            timestamp = dObj.getTime() || 0;
           }
         } catch { timestamp = 0; }
         items.push({ type: 'block', id: bl.id || generateUUID(), timestamp, raw: bl });
@@ -1203,25 +1270,25 @@ const AdminPanel = () => {
                         type="button"
                         onClick={() => setBlockRangeMode('single')}
                         className={cn(
-                          "flex-1 py-2 rounded-lg text-xs font-bold transition-all",
+                          "flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
                           blockRangeMode === 'single'
                             ? "bg-primary text-primary-foreground shadow-sm"
                             : "text-muted-foreground hover:text-foreground"
                         )}
                       >
-                        Dia Único
+                        📅 Bloquear 1 Dia
                       </button>
                       <button
                         type="button"
                         onClick={() => setBlockRangeMode('range')}
                         className={cn(
-                          "flex-1 py-2 rounded-lg text-xs font-bold transition-all",
+                          "flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
                           blockRangeMode === 'range'
                             ? "bg-primary text-primary-foreground shadow-sm"
                             : "text-muted-foreground hover:text-foreground"
                         )}
                       >
-                        Vários Dias / Período
+                        🗓️ Mais de 1 Dia (Vários)
                       </button>
                     </div>
 

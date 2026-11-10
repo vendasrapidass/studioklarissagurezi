@@ -57,15 +57,15 @@ export function isOpenNow(): boolean {
 }
 
 export function isDayAllowed(date: Date): boolean {
-  return date.getDay() !== 0; // Fechado aos Domingos
+  return date.getDay() !== 0; // Aberto de Segunda a Sábado (Fechado apenas aos Domingos)
 }
 
 export function getTimesForDate(date: Date): string[] {
   const day = date.getDay();
   if (day === 0) return []; // Domingos
   if (day === 6) {
-    // Sábados: 10:00, 12:30 e 14:00
-    return ['10:00', '12:30', '14:00'];
+    // Sábados: horários oficiais do estúdio (08:00, 11:00 e 14:00)
+    return ['08:00', '11:00', '14:00'];
   }
   // Segunda a Sexta: horários adequados para procedimentos de 2h a 3h encerrando até às 18:00
   return ['09:00', '13:30', '14:00', '15:00'];
