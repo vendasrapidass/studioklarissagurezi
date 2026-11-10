@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { cn } from '@/lib/utils';
 import { Booking, SERVICES, generateWhatsAppUrl, formatPhone, ScheduleBlock, generateUUID } from '@/lib/types';
 import { getBookings, saveBookings, getCompleted, saveCompleted, addCompleted, removeCompleted, addBooking, getBlocks, saveBlocks, addBlock, removeBlock } from '@/lib/bookingStore';
 import { useNavigate } from 'react-router-dom';
@@ -73,13 +74,42 @@ const AdminPanel = () => {
 
   // Schedule block state
   const [addMode, setAddMode] = useState<'booking' | 'block'>('booking');
+  const [blockRangeMode, setBlockRangeMode] = useState<'single' | 'range'>('single');
   const [blockDate, setBlockDate] = useState('');
+  const [blockStartDate, setBlockStartDate] = useState('');
+  const [blockEndDate, setBlockEndDate] = useState('');
   const [blockAllDay, setBlockAllDay] = useState(false);
   const [blockStart, setBlockStart] = useState('');
   const [blockEnd, setBlockEnd] = useState('');
   const [blockReason, setBlockReason] = useState('');
   const [blocks, setBlocks] = useState<ScheduleBlock[]>([]);
   const [isAddingBlock, setIsAddingBlock] = useState(false);
+
+  const rangeDatesPreview = useMemo(() => {
+    if (blockRangeMode !== 'range' || !blockStartDate || !blockEndDate) return [];
+    try {
+      const p1 = blockStartDate.split('/').map(Number);
+      const p2 = blockEndDate.split('/').map(Number);
+      if (p1.length < 3 || p2.length < 3) return [];
+      const d1 = new Date(p1[2], p1[1] - 1, p1[0]);
+      const d2 = new Date(p2[2], p2[1] - 1, p2[0]);
+      if (isNaN(d1.getTime()) || isNaN(d2.getTime()) || d1 > d2) return [];
+
+      const dates: string[] = [];
+      const curr = new Date(d1);
+      let count = 0;
+      const pad = (n: number) => String(n).padStart(2, '0');
+
+      while (curr <= d2 && count < 90) {
+        dates.push(`${pad(curr.getDate())}/${pad(curr.getMonth() + 1)}/${curr.getFullYear()}`);
+        curr.setDate(curr.getDate() + 1);
+        count++;
+      }
+      return dates;
+    } catch {
+      return [];
+    }
+  }, [blockRangeMode, blockStartDate, blockEndDate]);
 
   // Settings state
   const [studioName, setStudioName] = useState('Studio Klarissa Guarezi');
@@ -299,9 +329,23 @@ const AdminPanel = () => {
     if (!booking) return;
     const msg = `✨ *STUDIO KLARISSA GUAREZI* ✨\n\nOlá *${booking.name}*! 👋\n\nInfelizmente não poderemos atender seu agendamento. 😔\n\n📋 *Serviço:* ${booking.service}\n📅 *Data:* ${booking.date}\n🕐 *Horário:* ${booking.time}\n\n❌ *Motivo:* ${reason}\n\nPor favor, escolha outro horário disponível no nosso site. Desculpe pelo inconveniente! 🙏\n\nEstamos à disposição! 🌸`;
     if (booking.phone) { try { window.open(generateWhatsAppUrl(booking.phone, msg), '_blank'); } catch (e) { /* noop */ } }
+    
+    // 1. Remove do estado e storage local instantaneamente (Zero Lag)
     const updated = bookings.filter(b => b.id !== booking.id);
-    saveBookings(updated); setBookings(updated); setRefusingId(null);
-    fetch(`/api/calendar?id=${booking.id}`, { method: 'DELETE' })
+    saveBookings(updated);
+    setBookings(updated);
+    setRefusingId(null);
+    toast.success('Agendamento recusado com sucesso!');
+
+    // 2. Chama DELETE inteligente
+    const targetId = booking.googleEventId || booking.id;
+    const params = new URLSearchParams({
+      id: targetId,
+      googleEventId: booking.googleEventId || '',
+      name: booking.name || '',
+      date: booking.date || '',
+    });
+    fetch(`/api/calendar?${params.toString()}`, { method: 'DELETE' })
       .then(r => { if (!r.ok) throw new Error(); reload(); })
       .catch(e => console.error('Refuse sync error:', e));
   };
@@ -311,17 +355,50 @@ const AdminPanel = () => {
   const handleConfirmCancel = () => {
     if (!cancellingBooking) return;
     const booking = cancellingBooking;
+    
+    // 1. Remove do estado e storage local instantaneamente (Zero Lag)
     const updated = bookings.filter(b => b.id !== booking.id);
-    saveBookings(updated); setBookings(updated); setCancellingBooking(null);
-    fetch(`/api/calendar?id=${booking.id}`, { method: 'DELETE' })
-      .then(r => { if (!r.ok) throw new Error(); toast.success('Agendamento cancelado!'); reload(); })
-      .catch(e => { console.error('Cancel sync error:', e); toast.error('Erro ao cancelar.'); });
+    saveBookings(updated);
+    setBookings(updated);
+    setCancellingBooking(null);
+    toast.success('Agendamento cancelado com sucesso!');
+
+    // 2. Chama DELETE inteligente
+    const targetId = booking.googleEventId || booking.id;
+    const params = new URLSearchParams({
+      id: targetId,
+      googleEventId: booking.googleEventId || '',
+      name: booking.name || '',
+      date: booking.date || '',
+    });
+    fetch(`/api/calendar?${params.toString()}`, { method: 'DELETE' })
+      .then(r => { if (!r.ok) throw new Error(); reload(); })
+      .catch(e => { console.error('Cancel sync error:', e); });
   };
 
   // ─── Handlers: Edit Completed ─────────────────────────────────────────────────
 
   const handleDeleteCompleted = (id: string) => {
-    try { removeCompleted(id); setCompleted(getCompleted()); } catch (e) { console.error(e); }
+    const item = completed.find(c => c.id === id) || bookings.find(b => b.id === id);
+    try {
+      removeCompleted(id);
+      setCompleted(prev => prev.filter(c => c.id !== id));
+      setBookings(prev => prev.filter(b => b.id !== id));
+      toast.success('Agendamento concluído removido!');
+    } catch (e) {
+      console.error(e);
+    }
+
+    const targetId = item?.googleEventId || id;
+    const params = new URLSearchParams({
+      id: targetId,
+      googleEventId: item?.googleEventId || '',
+      name: item?.name || '',
+      date: item?.date || '',
+    });
+    fetch(`/api/calendar?${params.toString()}`, { method: 'DELETE' })
+      .then(r => { if (!r.ok) throw new Error(); reload(); })
+      .catch(e => console.error('Delete completed sync error:', e));
   };
 
   const startEdit = (b: Booking) => {
@@ -358,24 +435,40 @@ const AdminPanel = () => {
     }
   };
 
-  const handleSaveEditBooking = () => {
+  const handleSaveEditBooking = async () => {
     if (!editingBooking || !editBookingService || !editBookingDate || !editBookingTime) return;
     setIsSavingEdit(true);
     const formattedDate = safeDateToDisplay(editBookingDate);
     if (!formattedDate) { setIsSavingEdit(false); return; }
     const updatedBooking: Booking = { ...editingBooking, service: editBookingService, price: editBookingPrice, date: formattedDate, time: editBookingTime };
-    fetch('/api/calendar', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: editingBooking.id, type: 'booking', booking: updatedBooking, duration: getBookingDuration(updatedBooking.service) }),
-    })
-      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-      .then(() => {
-        const updated = bookings.map(b => b.id === editingBooking.id ? updatedBooking : b);
-        saveBookings(updated); setBookings(updated);
-        setEditingBooking(null); setIsSavingEdit(false);
-        toast.success('Agendamento editado com sucesso!'); reload();
-      })
-      .catch(err => { console.error('Edit booking error:', err); toast.error('Erro ao salvar alterações.'); setIsSavingEdit(false); });
+
+    // Atualiza estado local imediatamente (Zero Lag)
+    const updated = bookings.map(b => b.id === editingBooking.id ? updatedBooking : b);
+    saveBookings(updated);
+    setBookings(updated);
+    setEditingBooking(null);
+
+    try {
+      const res = await fetch('/api/calendar', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingBooking.id,
+          type: 'booking',
+          booking: updatedBooking,
+          duration: getBookingDuration(updatedBooking.service),
+          source: 'admin',
+        }),
+      });
+      if (!res.ok) throw new Error('API error on edit');
+      toast.success('Agendamento editado com sucesso!');
+      reload();
+    } catch (err) {
+      console.error('Edit booking error:', err);
+      toast.error('Erro ao salvar alterações no Google Calendar.');
+    } finally {
+      setIsSavingEdit(false);
+    }
   };
 
   // ─── Handlers: Manual Add ─────────────────────────────────────────────────────
@@ -386,7 +479,7 @@ const AdminPanel = () => {
     if (svc) setManualPrice(String(svc.price));
   };
 
-  const handleAddManualService = () => {
+  const handleAddManualService = async () => {
     setManualError('');
     if (!manualService.trim()) { setManualError('Selecione ou digite o nome do serviço.'); return; }
     if (!manualPrice) { setManualError('Informe o valor do serviço.'); return; }
@@ -419,85 +512,151 @@ const AdminPanel = () => {
       status: isPast ? 'completed' : 'accepted',
     };
 
-    // ── Update local state immediately (no waiting for API) ──────────────────
-    // This prevents a race condition where reload() from the POST .then() would
-    // call GET /api/calendar before Google Calendar has synced, overwriting local
-    // state and making the new booking disappear from the list.
+    // Atualiza estado local imediatamente (Zero Lag)
     try {
       if (isPast) {
         addCompleted(booking);
-        // Update React state directly — the booking appears instantly in Dashboard
         setCompleted(prev => [...prev, { ...booking, status: 'completed' }]);
       } else {
         addBooking(booking);
-        // Update React state directly — the booking appears instantly in "Todos"
         setBookings(prev => [...prev, booking]);
       }
     } catch (e) { console.error('Local store error:', e); }
 
-    // ── Sync to Google Calendar in background (non-blocking) ─────────────────
-    // NOTE: We do NOT call reload() here on success — doing so would trigger a
-    // GET to the API which might return stale data (Google Calendar sync lag)
-    // and overwrite the booking we just added. The booking is already in the
-    // local state and localStorage; the next natural reload() will pick it up.
     const svc = SERVICES.find(s => s.name === manualService);
     const duration = svc ? svc.time : 180;
 
-    fetch('/api/calendar', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'booking', booking, duration }),
-    })
-      .catch(e => console.error('Manual booking calendar sync error:', e))
-      .finally(() => {
-        setIsAddingManual(false);
-        setManualService(''); setManualPrice(''); setManualName('');
-        setManualPhone(''); setManualDate(''); setManualTime('');
-        setManualError('');
-        setShowSuccess(true);
-        setTab(isPast ? 'dashboard' : 'bookings');
-        setTimeout(() => setShowSuccess(false), 3000);
+    try {
+      const res = await fetch('/api/calendar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'booking',
+          booking,
+          duration,
+          source: 'admin',
+        }),
       });
+      if (!res.ok) {
+        console.warn('API returned non-200 for manual booking');
+      }
+    } catch (e) {
+      console.error('Manual booking calendar sync error:', e);
+    } finally {
+      setIsAddingManual(false);
+      setManualService(''); setManualPrice(''); setManualName('');
+      setManualPhone(''); setManualDate(''); setManualTime('');
+      setManualError('');
+      setShowSuccess(true);
+      setTab(isPast ? 'dashboard' : 'bookings');
+      setTimeout(() => setShowSuccess(false), 3000);
+      reload();
+    }
   };
 
   // ─── Handlers: Schedule Block ─────────────────────────────────────────────────
 
-  const handleSaveBlock = () => {
-    if (!blockDate || blockDate.length < 10) { toast.error('Informe a data completa no formato DD/MM/AAAA.'); return; }
-    if (!blockAllDay && (!blockStart || !blockEnd)) { toast.error('Informe os horários de início e término.'); return; }
+  const handleSaveBlock = async () => {
+    if (blockRangeMode === 'single') {
+      if (!blockDate || blockDate.length < 10) { toast.error('Informe a data completa no formato DD/MM/AAAA.'); return; }
+      if (!blockAllDay && (!blockStart || !blockEnd)) { toast.error('Informe os horários de início e término.'); return; }
 
-    setIsAddingBlock(true);
+      setIsAddingBlock(true);
 
-    const block: ScheduleBlock = {
-      id: generateUUID(),
-      date: blockDate,
-      allDay: blockAllDay,
-      start: blockAllDay ? undefined : blockStart,
-      end: blockAllDay ? undefined : blockEnd,
-      reason: blockReason.trim() || 'Bloqueio de Agenda',
-    };
+      const block: ScheduleBlock = {
+        id: generateUUID(),
+        date: blockDate,
+        allDay: blockAllDay,
+        start: blockAllDay ? undefined : blockStart,
+        end: blockAllDay ? undefined : blockEnd,
+        reason: blockReason.trim() || 'Bloqueio de Agenda',
+      };
 
-    try { addBlock(block); } catch (e) { console.error('Local store error:', e); }
+      try {
+        addBlock(block);
+        setBlocks(prev => [...prev, block]);
+      } catch (e) { console.error('Local store error:', e); }
 
-    fetch('/api/calendar', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'block', block }),
-    })
-      .then(r => { if (!r.ok) throw new Error('API error'); reload(); })
-      .catch(e => console.error('Block calendar sync error:', e))
-      .finally(() => {
+      try {
+        const res = await fetch('/api/calendar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'block', block, source: 'admin' }),
+        });
+        if (!res.ok) throw new Error();
+        toast.success('Bloqueio salvo!');
+      } catch (e) {
+        console.error('Block calendar sync error:', e);
+        toast.error('Erro ao salvar bloqueio no Google Calendar.');
+      } finally {
         setIsAddingBlock(false);
         setBlockDate(''); setBlockAllDay(false); setBlockStart('');
         setBlockEnd(''); setBlockReason('');
-        toast.success('Bloqueio salvo!');
         reload();
-      });
+      }
+    } else {
+      // Vários Dias / Período
+      if (!blockStartDate || blockStartDate.length < 10) { toast.error('Informe a data de início no formato DD/MM/AAAA.'); return; }
+      if (!blockEndDate || blockEndDate.length < 10) { toast.error('Informe a data de término no formato DD/MM/AAAA.'); return; }
+
+      if (rangeDatesPreview.length === 0) {
+        toast.error('A data de término deve ser posterior ou igual à data de início.');
+        return;
+      }
+
+      setIsAddingBlock(true);
+
+      const newBlocks: ScheduleBlock[] = rangeDatesPreview.map(d => ({
+        id: generateUUID(),
+        date: d,
+        allDay: blockAllDay,
+        start: blockAllDay ? undefined : blockStart,
+        end: blockAllDay ? undefined : blockEnd,
+        reason: blockReason.trim() || 'Bloqueio de Agenda',
+      }));
+
+      try {
+        newBlocks.forEach(b => addBlock(b));
+        setBlocks(prev => [...prev, ...newBlocks]);
+      } catch (e) { console.error('Local store error:', e); }
+
+      try {
+        const res = await fetch('/api/calendar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'blocks', blocks: newBlocks, source: 'admin' }),
+        });
+        if (!res.ok) throw new Error();
+        toast.success(`Bloqueio de ${newBlocks.length} dias salvo com sucesso!`);
+      } catch (e) {
+        console.error('Batch block sync error:', e);
+        toast.error('Erro ao salvar bloqueios no Google Calendar.');
+      } finally {
+        setIsAddingBlock(false);
+        setBlockStartDate(''); setBlockEndDate(''); setBlockAllDay(false);
+        setBlockStart(''); setBlockEnd(''); setBlockReason('');
+        reload();
+      }
+    }
   };
 
   const handleDeleteBlock = (id: string) => {
-    try { removeBlock(id); setBlocks(getBlocks()); } catch (e) { console.error(e); }
-    fetch(`/api/calendar?id=${id}&type=block`, { method: 'DELETE' })
+    const targetBlock = blocks.find(b => b.id === id);
+    try {
+      removeBlock(id);
+      setBlocks(prev => prev.filter(b => b.id !== id));
+      toast.success('Bloqueio removido com sucesso!');
+    } catch (e) { console.error(e); }
+
+    const targetId = targetBlock?.googleEventId || id;
+    const params = new URLSearchParams({
+      id: targetId,
+      googleEventId: targetBlock?.googleEventId || '',
+      name: targetBlock?.reason || '',
+      date: targetBlock?.date || '',
+      type: 'block',
+    });
+    fetch(`/api/calendar?${params.toString()}`, { method: 'DELETE' })
       .then(r => { if (!r.ok) throw new Error(); reload(); })
       .catch(e => console.error('Delete block error:', e));
   };
@@ -1028,7 +1187,7 @@ const AdminPanel = () => {
                       className={`w-full py-4 font-bold rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${manualIsPast ? 'bg-emerald-600 hover:bg-emerald-500 text-white hover:shadow-[0_0_25px_-5px_rgba(52,211,153,0.4)]' : 'bg-primary text-primary-foreground hover:shadow-[0_0_25px_-5px_hsl(6_48%_68%/0.5)]'}`}
                     >
                       {isAddingManual ? (
-                        <><div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />Salvando...</>
+                        <><div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />Salvando agendamento...</>
                       ) : manualIsPast ? (
                         <><Check className="w-5 h-5" /> Registrar no Faturamento</>
                       ) : (
@@ -1038,10 +1197,64 @@ const AdminPanel = () => {
                   </div>
                 ) : (
                   <div className="space-y-5">
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2 block">Data (DD/MM/AAAA)</label>
-                      <input type="text" inputMode="numeric" value={blockDate} onChange={e => setBlockDate(maskDate(e.target.value))} placeholder="07/08/2026" maxLength={10} className="w-full bg-background/50 border border-primary/10 focus:border-primary/40 p-3.5 rounded-xl outline-none transition-all text-foreground text-sm placeholder:text-muted-foreground/40" />
+                    {/* Seletor Dia Único / Vários Dias */}
+                    <div className="flex p-1 bg-background/60 rounded-xl border border-primary/10">
+                      <button
+                        type="button"
+                        onClick={() => setBlockRangeMode('single')}
+                        className={cn(
+                          "flex-1 py-2 rounded-lg text-xs font-bold transition-all",
+                          blockRangeMode === 'single'
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        Dia Único
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBlockRangeMode('range')}
+                        className={cn(
+                          "flex-1 py-2 rounded-lg text-xs font-bold transition-all",
+                          blockRangeMode === 'range'
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        Vários Dias / Período
+                      </button>
                     </div>
+
+                    {blockRangeMode === 'single' ? (
+                      <div>
+                        <label className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2 block">Data (DD/MM/AAAA)</label>
+                        <input type="text" inputMode="numeric" value={blockDate} onChange={e => setBlockDate(maskDate(e.target.value))} placeholder="07/08/2026" maxLength={10} className="w-full bg-background/50 border border-primary/10 focus:border-primary/40 p-3.5 rounded-xl outline-none transition-all text-foreground text-sm placeholder:text-muted-foreground/40" />
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2 block">Data de Início (DD/MM/AAAA)</label>
+                            <input type="text" inputMode="numeric" value={blockStartDate} onChange={e => setBlockStartDate(maskDate(e.target.value))} placeholder="07/08/2026" maxLength={10} className="w-full bg-background/50 border border-primary/10 focus:border-primary/40 p-3.5 rounded-xl outline-none transition-all text-foreground text-sm placeholder:text-muted-foreground/40" />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-2 block">Data de Término (DD/MM/AAAA)</label>
+                            <input type="text" inputMode="numeric" value={blockEndDate} onChange={e => setBlockEndDate(maskDate(e.target.value))} placeholder="10/08/2026" maxLength={10} className="w-full bg-background/50 border border-primary/10 focus:border-primary/40 p-3.5 rounded-xl outline-none transition-all text-foreground text-sm placeholder:text-muted-foreground/40" />
+                          </div>
+                        </div>
+
+                        {rangeDatesPreview.length > 0 && (
+                          <div className="p-3 bg-primary/10 border border-primary/20 rounded-xl text-xs space-y-1">
+                            <span className="font-bold text-primary flex items-center gap-1.5">
+                              📅 {rangeDatesPreview.length} {rangeDatesPreview.length === 1 ? 'dia selecionado' : 'dias selecionados'}:
+                            </span>
+                            <p className="text-muted-foreground truncate">
+                              {rangeDatesPreview.slice(0, 5).join(', ')}{rangeDatesPreview.length > 5 ? ` e mais ${rangeDatesPreview.length - 5} dias...` : ''}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between bg-background/50 border border-primary/10 p-4 rounded-xl">
                       <span className="text-sm text-foreground font-medium">Bloquear o dia inteiro</span>
@@ -1069,7 +1282,13 @@ const AdminPanel = () => {
                     </div>
 
                     <button type="button" onClick={handleSaveBlock} disabled={isAddingBlock} className="w-full py-4 bg-primary text-primary-foreground font-bold rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                      {isAddingBlock ? <><div className="w-4 h-4 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin" />Salvando...</> : 'Salvar Bloqueio'}
+                      {isAddingBlock ? (
+                        <><div className="w-4 h-4 rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground animate-spin" />Salvando...</>
+                      ) : blockRangeMode === 'range' && rangeDatesPreview.length > 0 ? (
+                        `Salvar Bloqueio (${rangeDatesPreview.length} ${rangeDatesPreview.length === 1 ? 'dia' : 'dias'})`
+                      ) : (
+                        'Salvar Bloqueio'
+                      )}
                     </button>
                   </div>
                 )}

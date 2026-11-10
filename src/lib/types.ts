@@ -8,6 +8,7 @@ export interface Service {
 
 export interface ScheduleBlock {
   id: string;
+  googleEventId?: string;
   date: string;
   allDay: boolean;
   start?: string;
@@ -17,6 +18,7 @@ export interface ScheduleBlock {
 
 export interface Booking {
   id: string;
+  googleEventId?: string;
   service: string;
   price: number;
   date: string;

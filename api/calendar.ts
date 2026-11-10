@@ -173,6 +173,7 @@ export default async function handler(req: any, res: any) {
 
       for (const event of events) {
         if (!event.id) continue;
+        if (event.status === 'cancelled') continue;
 
         const shared = event.extendedProperties?.shared;
         const summary = event.summary || '';
@@ -229,6 +230,7 @@ export default async function handler(req: any, res: any) {
 
           blocks.push({
             id: shared?.id || event.id,
+            googleEventId: event.id,
             date: shared?.date || dateVal,
             allDay,
             start: shared?.start || startVal,
@@ -344,6 +346,7 @@ export default async function handler(req: any, res: any) {
 
           bookings.push({
             id: shared?.id || event.id,
+            googleEventId: event.id,
             service,
             price,
             date: shared?.date || dateVal,
@@ -367,7 +370,8 @@ export default async function handler(req: any, res: any) {
     // POST: Criar novo evento (agendamento ou bloqueio)
     // ----------------------------------------------------
     if (req.method === 'POST') {
-      const { type, booking, block, duration } = req.body;
+      const { type, booking, block, blocks, duration, source } = req.body;
+      const isAdmin = source === 'admin';
 
       if (type === 'booking') {
         const id = booking.id;
@@ -381,54 +385,57 @@ export default async function handler(req: any, res: any) {
         const endMs = startMs + (duration || 180) * 60 * 1000;
         const endDateTime = new Date(endMs).toISOString();
 
-        // --- CHECK DOUBLE BOOKING DIRETO NO GOOGLE CALENDAR ---
-        const dayStartIso = `${isoDate}T00:00:00-03:00`;
-        const dayEndIso = `${isoDate}T23:59:59-03:00`;
+        // Se for admin, pula verificação de conflitos (Passe Livre)
+        if (!isAdmin) {
+          // --- CHECK DOUBLE BOOKING DIRETO NO GOOGLE CALENDAR ---
+          const dayStartIso = `${isoDate}T00:00:00-03:00`;
+          const dayEndIso = `${isoDate}T23:59:59-03:00`;
 
-        try {
-          const dayEventsRes = await calendar.events.list({
-            calendarId: activeCalendarId,
-            timeMin: new Date(dayStartIso).toISOString(),
-            timeMax: new Date(dayEndIso).toISOString(),
-            singleEvents: true,
-          });
+          try {
+            const dayEventsRes = await calendar.events.list({
+              calendarId: activeCalendarId,
+              timeMin: new Date(dayStartIso).toISOString(),
+              timeMax: new Date(dayEndIso).toISOString(),
+              singleEvents: true,
+            });
 
-          const dayEvents = dayEventsRes.data.items || [];
-          const newStart = timeToMinutes(booking.time);
-          const newEnd = newStart + (duration || 180);
+            const dayEvents = dayEventsRes.data.items || [];
+            const newStart = timeToMinutes(booking.time);
+            const newEnd = newStart + (duration || 180);
 
-          for (const ev of dayEvents) {
-            if (ev.id === eventId) continue;
-            if (ev.status === 'cancelled') continue;
+            for (const ev of dayEvents) {
+              if (ev.id === eventId) continue;
+              if (ev.status === 'cancelled') continue;
 
-            // Se for o mesmo cliente (ex: sincronização ou atualização), não conflita
-            if (booking.name && (ev.summary || '').toLowerCase().includes(booking.name.toLowerCase())) {
-              continue;
-            }
+              // Se for o mesmo cliente (ex: sincronização ou atualização), não conflita
+              if (booking.name && (ev.summary || '').toLowerCase().includes(booking.name.toLowerCase())) {
+                continue;
+              }
 
-            const isAllDay = !!ev.start?.date;
-            const evSummary = (ev.summary || '').toLowerCase();
-            const isBlockSummary = evSummary.includes('bloque') || evSummary.includes('folga') || evSummary.includes('fechado') || evSummary.includes('indispon');
-            if (isAllDay && (ev.extendedProperties?.shared?.type === 'block' || isBlockSummary)) {
-              return res.status(409).json({ error: 'slot_occupied', message: 'Este dia está bloqueado para agendamentos.' });
-            }
+              const isAllDay = !!ev.start?.date;
+              const evSummary = (ev.summary || '').toLowerCase();
+              const isBlockSummary = evSummary.includes('bloque') || evSummary.includes('folga') || evSummary.includes('fechado') || evSummary.includes('indispon');
+              if (isAllDay && (ev.extendedProperties?.shared?.type === 'block' || isBlockSummary)) {
+                return res.status(409).json({ error: 'slot_occupied', message: 'Este dia está bloqueado para agendamentos.' });
+              }
 
-            if (ev.start?.dateTime && ev.end?.dateTime) {
-              const parsedStart = parseDateTimeToSaoPaulo(ev.start.dateTime);
-              const parsedEnd = parseDateTimeToSaoPaulo(ev.end.dateTime);
-              if (parsedStart && parsedEnd) {
-                const evStart = timeToMinutes(parsedStart.time);
-                const evEnd = timeToMinutes(parsedEnd.time);
-                if (Math.max(newStart, evStart) < Math.min(newEnd, evEnd)) {
-                  return res.status(409).json({ error: 'slot_occupied', message: 'Este horário acabou de ser preenchido, por favor selecione outro.' });
+              if (ev.start?.dateTime && ev.end?.dateTime) {
+                const parsedStart = parseDateTimeToSaoPaulo(ev.start.dateTime);
+                const parsedEnd = parseDateTimeToSaoPaulo(ev.end.dateTime);
+                if (parsedStart && parsedEnd) {
+                  const evStart = timeToMinutes(parsedStart.time);
+                  const evEnd = timeToMinutes(parsedEnd.time);
+                  if (Math.max(newStart, evStart) < Math.min(newEnd, evEnd)) {
+                    return res.status(409).json({ error: 'slot_occupied', message: 'Este horário acabou de ser preenchido, por favor selecione outro.' });
+                  }
                 }
               }
             }
+          } catch (conflictCheckErr) {
+            console.warn("Could not check double-booking on Google Calendar (proceeding):", conflictCheckErr);
           }
-        } catch (conflictCheckErr) {
-          console.warn("Could not check double-booking on Google Calendar (proceeding):", conflictCheckErr);
+          // --- END CHECK DOUBLE BOOKING ---
         }
-        // --- END CHECK DOUBLE BOOKING ---
 
         // 1. CRIAR NO GOOGLE CALENDAR PRIMEIRO (Prioridade Máxima)
         const title = `${booking.service} - ${booking.name}`;
@@ -444,7 +451,6 @@ export default async function handler(req: any, res: any) {
             {
               email: professionalEmail,
               displayName: 'Studio Klarissa Guarezi',
-              responseStatus: 'accepted',
             }
           ] : undefined,
           reminders: {
@@ -478,26 +484,44 @@ export default async function handler(req: any, res: any) {
         try {
           insertedEvent = await calendar.events.insert({
             calendarId: activeCalendarId,
-            sendUpdates: 'all',
             requestBody: insertPayload,
           });
         } catch (insertErr: any) {
+          console.warn("Google Calendar primary insert error:", insertErr?.message || insertErr);
           if ((insertErr?.code === 404 || insertErr?.message?.includes('Not Found')) && activeCalendarId !== DEFAULT_STUDIO_CALENDAR_ID) {
             activeCalendarId = DEFAULT_STUDIO_CALENDAR_ID;
-            insertedEvent = await calendar.events.insert({
-              calendarId: activeCalendarId,
-              sendUpdates: 'all',
-              requestBody: insertPayload,
-            });
-          } else if (insertPayload.id) {
+            try {
+              insertedEvent = await calendar.events.insert({
+                calendarId: activeCalendarId,
+                requestBody: insertPayload,
+              });
+            } catch (retryErr) {
+              console.warn("Retry insert on default calendar failed:", retryErr);
+            }
+          }
+          if (!insertedEvent && insertPayload.id) {
             delete insertPayload.id;
-            insertedEvent = await calendar.events.insert({
-              calendarId: activeCalendarId,
-              sendUpdates: 'all',
-              requestBody: insertPayload,
-            });
-          } else {
-            throw insertErr;
+            try {
+              insertedEvent = await calendar.events.insert({
+                calendarId: activeCalendarId,
+                requestBody: insertPayload,
+              });
+            } catch (retryErr2) {
+              console.warn("Retry insert without custom id failed:", retryErr2);
+            }
+          }
+          if (!insertedEvent) {
+            try {
+              const cleanPayload = { ...insertPayload };
+              delete cleanPayload.id;
+              delete cleanPayload.attendees;
+              insertedEvent = await calendar.events.insert({
+                calendarId: DEFAULT_STUDIO_CALENDAR_ID,
+                requestBody: cleanPayload,
+              });
+            } catch (fallbackCleanErr) {
+              console.error("Clean fallback insert failed:", fallbackCleanErr);
+            }
           }
         }
 
@@ -514,41 +538,42 @@ export default async function handler(req: any, res: any) {
               data_hora_inicio: startDateTime,
               data_hora_fim: endDateTime,
               status: booking.status || 'accepted',
-              google_event_id: eventId
+              google_event_id: insertedEvent?.data?.id || eventId
             });
         } catch (sbErr) {
           console.warn("Supabase mirror error (non-fatal):", sbErr);
         }
 
-        return res.status(201).json({ success: true, eventId });
+        return res.status(201).json({ success: true, eventId: insertedEvent?.data?.id || eventId });
       }
 
-      if (type === 'block') {
-        const id = block.id;
-        const eventId = id.replace(/-/g, '').toLowerCase();
+      // Função auxiliar para inserção de bloqueio único
+      const insertSingleBlock = async (b: any) => {
+        if (!b || !b.id || !b.date) return null;
+        const bId = b.id;
+        const bEventId = bId.replace(/-/g, '').toLowerCase();
 
-        const [d, m, y] = block.date.split('/');
+        const [d, m, y] = b.date.split('/');
         const isoDate = `${y}-${m}-${d}`;
 
         let startDateTime: string;
         let endDateTime: string;
         let duracao = 1440;
 
-        if (block.allDay) {
+        if (b.allDay) {
           startDateTime = `${isoDate}T00:00:00-03:00`;
           endDateTime = `${isoDate}T23:59:59-03:00`;
         } else {
-          startDateTime = `${isoDate}T${block.start}:00-03:00`;
-          endDateTime = `${isoDate}T${block.end}:00-03:00`;
+          startDateTime = `${isoDate}T${b.start || '08:00'}:00-03:00`;
+          endDateTime = `${isoDate}T${b.end || '18:00'}:00-03:00`;
           duracao = Math.round((new Date(endDateTime).getTime() - new Date(startDateTime).getTime()) / 60000);
         }
 
-        // 1. Criar no Google Calendar primeiro
-        const title = `Bloqueio - ${block.reason || 'Indisponível'}`;
+        const title = `Bloqueio - ${b.reason || 'Indisponível'}`;
         let start: any;
         let end: any;
 
-        if (block.allDay) {
+        if (b.allDay) {
           start = { date: isoDate };
           const dateObj = new Date(Number(y), Number(m) - 1, Number(d));
           dateObj.setDate(dateObj.getDate() + 1);
@@ -560,62 +585,96 @@ export default async function handler(req: any, res: any) {
           end = { dateTime: endDateTime, timeZone: 'America/Sao_Paulo' };
         }
 
-        const blockRequestBody = {
-          id: eventId,
+        const blockRequestBody: any = {
           summary: title,
-          description: `Bloqueio de Agenda\nMotivo: ${block.reason || 'Indisponível'}`,
+          description: `Bloqueio de Agenda\nMotivo: ${b.reason || 'Indisponível'}`,
           start,
           end,
           extendedProperties: {
             shared: {
-              id,
+              id: bId,
               type: 'block',
-              reason: block.reason || 'Indisponível',
-              date: block.date,
-              allDay: String(block.allDay),
-              start: block.start || '',
-              end: block.end || '',
+              reason: b.reason || 'Indisponível',
+              date: b.date,
+              allDay: String(b.allDay),
+              start: b.start || '',
+              end: b.end || '',
             },
           },
         };
 
+        if (/^[a-v0-9]{5,1024}$/.test(bEventId)) {
+          blockRequestBody.id = bEventId;
+        }
+
+        let createdBlockEventId = bEventId;
         try {
-          await calendar.events.insert({
+          const res = await calendar.events.insert({
             calendarId: activeCalendarId,
             requestBody: blockRequestBody,
           });
+          if (res.data?.id) createdBlockEventId = res.data.id;
         } catch (blockErr: any) {
           if ((blockErr?.code === 404 || blockErr?.message?.includes('Not Found')) && activeCalendarId !== DEFAULT_STUDIO_CALENDAR_ID) {
             activeCalendarId = DEFAULT_STUDIO_CALENDAR_ID;
-            await calendar.events.insert({
-              calendarId: activeCalendarId,
-              requestBody: blockRequestBody,
-            });
-          } else {
-            throw blockErr;
+            try {
+              const res2 = await calendar.events.insert({
+                calendarId: activeCalendarId,
+                requestBody: blockRequestBody,
+              });
+              if (res2.data?.id) createdBlockEventId = res2.data.id;
+            } catch (errFallback) {
+              console.warn("Block fallback insert failed:", errFallback);
+            }
+          } else if (blockRequestBody.id) {
+            delete blockRequestBody.id;
+            try {
+              const res3 = await calendar.events.insert({
+                calendarId: activeCalendarId,
+                requestBody: blockRequestBody,
+              });
+              if (res3.data?.id) createdBlockEventId = res3.data.id;
+            } catch (errFallback2) {
+              console.warn("Block insert without ID failed:", errFallback2);
+            }
           }
         }
 
-        // 2. Espelhar no Supabase
+        // Espelhar no Supabase
         try {
           await supabase
             .from('appointments')
             .upsert({
-              id,
+              id: bId,
               cliente_nome: null,
               cliente_telefone: null,
-              servico_nome: block.reason || 'Bloqueio',
+              servico_nome: b.reason || 'Bloqueio',
               duracao_minutos: duracao,
               data_hora_inicio: startDateTime,
               data_hora_fim: endDateTime,
               status: 'blocked',
-              google_event_id: eventId
+              google_event_id: createdBlockEventId
             });
         } catch (sbErr) {
           console.warn("Supabase block mirror error (non-fatal):", sbErr);
         }
 
+        return createdBlockEventId;
+      };
+
+      if (type === 'block') {
+        const eventId = await insertSingleBlock(block);
         return res.status(201).json({ success: true, eventId });
+      }
+
+      if (type === 'blocks') {
+        const blockList: any[] = Array.isArray(blocks) ? blocks : [];
+        const createdIds: string[] = [];
+        for (const single of blockList) {
+          const evId = await insertSingleBlock(single);
+          if (evId) createdIds.push(evId);
+        }
+        return res.status(201).json({ success: true, count: createdIds.length, ids: createdIds });
       }
     }
 
@@ -654,7 +713,6 @@ export default async function handler(req: any, res: any) {
             {
               email: professionalEmail,
               displayName: 'Studio Klarissa Guarezi',
-              responseStatus: 'accepted',
             }
           ] : undefined,
           reminders: {
@@ -684,7 +742,6 @@ export default async function handler(req: any, res: any) {
           await calendar.events.update({
             calendarId: activeCalendarId,
             eventId,
-            sendUpdates: 'all',
             requestBody: updatePayload,
           });
           updated = true;
@@ -700,6 +757,7 @@ export default async function handler(req: any, res: any) {
               singleEvents: true,
             });
             const existing = (searchRes.data.items || []).find((ev: any) => {
+              if (ev.status === 'cancelled') return false;
               const s = (ev.summary || '').toLowerCase();
               return (booking.name && s.includes(booking.name.toLowerCase())) || ev.extendedProperties?.shared?.id === id;
             });
@@ -707,7 +765,6 @@ export default async function handler(req: any, res: any) {
               await calendar.events.update({
                 calendarId: activeCalendarId,
                 eventId: existing.id,
-                sendUpdates: 'all',
                 requestBody: updatePayload,
               });
               updated = true;
@@ -717,16 +774,18 @@ export default async function handler(req: any, res: any) {
           }
         }
 
-        // Se ainda não existia no Google Calendar, cria na hora para garantir que nunca se perca!
+        // Se ainda não existia no Google Calendar, cria na hora (Upsert automático)
         if (!updated) {
           try {
+            const cleanUpsertPayload = { ...updatePayload };
+            delete cleanUpsertPayload.id;
             await calendar.events.insert({
               calendarId: activeCalendarId,
-              requestBody: updatePayload,
+              requestBody: cleanUpsertPayload,
             });
             updated = true;
           } catch (insertFallbackErr) {
-            console.warn("Fallback insert in PUT error:", insertFallbackErr);
+            console.warn("Fallback upsert in PUT error:", insertFallbackErr);
           }
         }
 
@@ -825,38 +884,102 @@ export default async function handler(req: any, res: any) {
     }
 
     // ----------------------------------------------------
-    // DELETE: Excluir evento (agendamento ou bloqueio)
+    // DELETE: Excluir evento (agendamento ou bloqueio inteligente)
     // ----------------------------------------------------
     if (req.method === 'DELETE') {
-      const id = (req.query.id as string) || req.body.id;
-      if (!id) {
-        return res.status(400).json({ error: 'ID is required' });
-      }
-      const eventId = id.replace(/-/g, '').toLowerCase();
+      const id = (req.query.id as string) || req.body?.id;
+      const googleEventId = (req.query.googleEventId as string) || req.body?.googleEventId;
+      const name = (req.query.name as string) || req.body?.name;
+      const date = (req.query.date as string) || req.body?.date;
 
-      // 1. Excluir do Google Calendar
-      try {
-        await calendar.events.delete({
-          calendarId: activeCalendarId,
-          eventId,
-        });
-      } catch (err: any) {
-        if (err.code !== 404) {
-          throw err;
+      if (!id && !googleEventId) {
+        return res.status(400).json({ error: 'ID or googleEventId is required' });
+      }
+
+      const candidates: string[] = [];
+      if (googleEventId) candidates.push(googleEventId);
+      if (id) {
+        const hexId = id.replace(/-/g, '').toLowerCase();
+        if (/^[a-v0-9]{5,1024}$/.test(hexId)) candidates.push(hexId);
+        candidates.push(id);
+      }
+
+      let deletedFromGoogle = false;
+
+      // 1. Tentar exclusão direta pelos candidatos de ID
+      for (const candId of candidates) {
+        try {
+          await calendar.events.delete({
+            calendarId: activeCalendarId,
+            eventId: candId,
+          });
+          deletedFromGoogle = true;
+          break;
+        } catch (delErr: any) {
+          if (delErr.code !== 404 && !delErr.message?.includes('Not Found')) {
+            console.warn(`Direct delete failed for ${candId}:`, delErr.message || delErr);
+          }
         }
       }
 
-      // 2. Excluir do Supabase
-      try {
-        await supabase
-          .from('appointments')
-          .delete()
-          .eq('id', id);
-      } catch (sbErr) {
-        console.warn("Supabase delete error (non-fatal):", sbErr);
+      // 2. Se não encontrou por ID direto (404), faz busca inteligente no Google Calendar
+      if (!deletedFromGoogle) {
+        try {
+          let timeMin: string | undefined;
+          let timeMax: string | undefined;
+          if (date && date.includes('/')) {
+            const [d, m, y] = date.split('/');
+            timeMin = new Date(`${y}-${m}-${d}T00:00:00-03:00`).toISOString();
+            timeMax = new Date(`${y}-${m}-${d}T23:59:59-03:00`).toISOString();
+          }
+
+          const searchRes = await calendar.events.list({
+            calendarId: activeCalendarId,
+            timeMin,
+            timeMax,
+            singleEvents: true,
+            maxResults: 100,
+          });
+
+          const items = searchRes.data.items || [];
+          for (const ev of items) {
+            if (!ev.id || ev.status === 'cancelled') continue;
+
+            const shared = ev.extendedProperties?.shared;
+            const evSummary = (ev.summary || '').toLowerCase();
+            const matchId = (id && shared?.id === id) || (id && ev.id === id) || (googleEventId && ev.id === googleEventId);
+            const matchName = name && name.trim().length >= 2 && evSummary.includes(name.trim().toLowerCase());
+
+            if (matchId || matchName) {
+              try {
+                await calendar.events.delete({
+                  calendarId: activeCalendarId,
+                  eventId: ev.id,
+                });
+                deletedFromGoogle = true;
+              } catch (delFoundErr) {
+                console.warn(`Error deleting searched event ${ev.id}:`, delFoundErr);
+              }
+            }
+          }
+        } catch (searchDelErr) {
+          console.warn("Intelligent delete search error:", searchDelErr);
+        }
       }
 
-      return res.status(200).json({ success: true });
+      // 3. Excluir do Supabase
+      if (id) {
+        try {
+          await supabase
+            .from('appointments')
+            .delete()
+            .eq('id', id);
+        } catch (sbErr) {
+          console.warn("Supabase delete error (non-fatal):", sbErr);
+        }
+      }
+
+      return res.status(200).json({ success: true, deletedFromGoogle });
     }
 
     return res.status(405).json({ error: 'Method not allowed' });
