@@ -117,6 +117,8 @@ const AdminPanel = () => {
   const [isProvisioning, setIsProvisioning] = useState(false);
   const [activeCalendarId, setActiveCalendarId] = useState('');
   const [serviceAccountEmail, setServiceAccountEmail] = useState('');
+  const [agendaPaused, setAgendaPaused] = useState(false);
+  const [isTogglingPause, setIsTogglingPause] = useState(false);
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -242,6 +244,7 @@ const AdminPanel = () => {
       .then(data => {
         if (data.calendarId) setActiveCalendarId(data.calendarId);
         if (data.serviceAccountEmail) setServiceAccountEmail(data.serviceAccountEmail);
+        if (typeof data.agendaPaused === 'boolean') setAgendaPaused(data.agendaPaused);
 
         if (Array.isArray(data.bookings)) {
           const currentBookings = getBookings();
@@ -329,6 +332,30 @@ const AdminPanel = () => {
   };
 
   useEffect(() => { reload(); }, []);
+
+  const handleToggleAgendaPause = async () => {
+    const nextPaused = !agendaPaused;
+    setIsTogglingPause(true);
+    try {
+      const res = await fetch('/api/calendar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'toggle_pause', paused: nextPaused, source: 'admin' }),
+      });
+      if (!res.ok) throw new Error('Failed to toggle pause');
+      setAgendaPaused(nextPaused);
+      toast.success(
+        nextPaused
+          ? 'Agenda pausada! Todos os horários foram ocultados do site.'
+          : 'Agenda reaberta! Os horários voltaram a aparecer no site.'
+      );
+    } catch (err) {
+      console.error('Toggle agenda pause error:', err);
+      toast.error('Erro ao alterar status da agenda.');
+    } finally {
+      setIsTogglingPause(false);
+    }
+  };
 
   // ─── Handlers: Calendar Provision ─────────────────────────────────────────────
 
@@ -857,6 +884,37 @@ const AdminPanel = () => {
           </div>
           <button onClick={() => navigate('/')} className="flex items-center gap-2 text-muted-foreground hover:text-primary transition-colors text-sm">
             <ArrowLeft className="w-4 h-4" /> Voltar
+          </button>
+        </div>
+
+        {/* Status Global da Agenda */}
+        <div className={`px-4 md:px-6 py-3 border-b flex flex-wrap items-center justify-between gap-3 ${agendaPaused ? 'bg-amber-500/10 border-amber-500/20' : 'bg-emerald-500/5 border-primary/10'}`}>
+          <div className="flex items-center gap-2.5 text-xs md:text-sm font-medium">
+            <span className={`w-2.5 h-2.5 rounded-full ${agendaPaused ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`} />
+            {agendaPaused ? (
+              <span className="text-amber-200">
+                <strong>Agenda Pausada (Lotada):</strong> Todos os horários estão ocultos no site.
+              </span>
+            ) : (
+              <span className="text-emerald-200">
+                <strong>Agenda Online Aberta:</strong> Clientes podem visualizar e agendar horários disponíveis.
+              </span>
+            )}
+          </div>
+          <button
+            onClick={handleToggleAgendaPause}
+            disabled={isTogglingPause}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-50 ${
+              agendaPaused
+                ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'
+                : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30'
+            }`}
+          >
+            {isTogglingPause
+              ? 'Salvando...'
+              : agendaPaused
+              ? '🔓 Reabrir Agenda Online'
+              : '🔒 Pausar Todos os Horários'}
           </button>
         </div>
 

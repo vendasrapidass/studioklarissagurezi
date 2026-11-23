@@ -44,6 +44,8 @@ const BookingSection = () => {
   const [availableTimes, setAvailableTimes] = useState<string[]>([]);
   const [googleBookings, setGoogleBookings] = useState<Booking[]>([]);
   const [googleBlocks, setGoogleBlocks] = useState<ScheduleBlock[]>([]);
+  const [agendaPaused, setAgendaPaused] = useState<boolean>(true);
+  const [isLoadingAgenda, setIsLoadingAgenda] = useState<boolean>(true);
 
   const refreshCalendarEvents = () => {
     fetch(`/api/calendar?realtime=true&t=${Date.now()}`)
@@ -55,9 +57,12 @@ const BookingSection = () => {
         if (Array.isArray(data.blocks)) {
           setGoogleBlocks(data.blocks);
         }
+        setAgendaPaused(Boolean(data.agendaPaused));
+        setIsLoadingAgenda(false);
       })
       .catch((err) => {
         console.error("Error loading events from Google Calendar API:", err);
+        setIsLoadingAgenda(false);
       });
   };
 
@@ -73,7 +78,7 @@ const BookingSection = () => {
   }, [selectedDate]);
 
   useEffect(() => {
-    if (!selectedDate || !selectedService) {
+    if (agendaPaused || !selectedDate || !selectedService) {
       setAvailableTimes([]);
       return;
     }
@@ -173,7 +178,7 @@ const BookingSection = () => {
 
     const localSlots = calculateLocalSlots();
     setAvailableTimes(localSlots);
-  }, [selectedDate, selectedService, extras, totalDuration, googleBookings, googleBlocks]);
+  }, [selectedDate, selectedService, extras, totalDuration, googleBookings, googleBlocks, agendaPaused]);
 
   // Combined service name and price
   const combinedServiceName = useMemo(() => {
@@ -417,8 +422,44 @@ const BookingSection = () => {
         </div>
 
         <div className="glass rounded-3xl p-4 md:p-8 card-shadow min-h-[400px]">
-          {/* Steps */}
-          <div className="flex justify-between mb-10 px-2 md:px-4">
+          {isLoadingAgenda ? (
+            <div className="flex flex-col items-center justify-center py-24 gap-4">
+              <div className="w-10 h-10 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
+              <p className="text-sm text-muted-foreground">Carregando disponibilidade...</p>
+            </div>
+          ) : agendaPaused ? (
+            <div className="flex flex-col items-center justify-center text-center py-12 px-4 max-w-md mx-auto space-y-5">
+              <div className="w-16 h-16 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-3xl">
+                📅
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-2xl font-bold text-foreground">Agenda Temporariamente Lotada</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  No momento não há horários disponíveis para agendamento online pelo site.
+                </p>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Entre em contato diretamente pelo WhatsApp para consultar possíveis encaixes ou entrar na lista de espera!
+                </p>
+              </div>
+              <a
+                href={generateWhatsAppUrl(
+                  WHATSAPP_NUMBER,
+                  'Olá Klarissa! Vi no site que a agenda está lotada. Gostaria de consultar se há algum encaixe ou entrar na lista de espera! 💕'
+                )}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-4 px-6 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-2xl transition-all flex items-center justify-center gap-2 text-sm shadow-[0_0_20px_rgba(16,185,129,0.3)] active:scale-95"
+              >
+                <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                  <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981z"/>
+                </svg>
+                Consultar Encaixe no WhatsApp
+              </a>
+            </div>
+          ) : (
+            <>
+              {/* Steps */}
+              <div className="flex justify-between mb-10 px-2 md:px-4">
             {[1, 2, 3, 4].map((i) => (
               <div key={i} className="flex flex-col items-center gap-2">
                 <div
@@ -589,6 +630,8 @@ const BookingSection = () => {
               </motion.div>
             )}
           </AnimatePresence>
+            </>
+          )}
         </div>
       </section>
 

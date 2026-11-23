@@ -21,6 +21,7 @@ const supabase = createClient(
 // ID da agenda oficial provisionada para o estúdio e e-mail da profissional
 const DEFAULT_STUDIO_CALENDAR_ID = '24283cd68ba66c84fb7927560352d4e5d5a4e0e71526527976af2a6557c1c1ac@group.calendar.google.com';
 const DEFAULT_PROFESSIONAL_EMAIL = process.env.PROFESSIONAL_EMAIL || 'Khemanuely@gmail.com';
+const AGENDA_PAUSE_EVENT_ID = 'configagendapausada000000000000001';
 
 // Cache dinâmico em memória para o Calendar ID
 let cachedCalendarId: string | null = null;
@@ -239,6 +240,7 @@ export default async function handler(req: any, res: any) {
 
       const bookings: any[] = [];
       const blocks: any[] = [];
+      let agendaPaused = false;
 
       for (const event of events) {
         if (!event.id) continue;
@@ -247,6 +249,15 @@ export default async function handler(req: any, res: any) {
         const shared = event.extendedProperties?.shared;
         const summary = event.summary || '';
         const summaryLower = summary.toLowerCase();
+
+        if (
+          event.id === AGENDA_PAUSE_EVENT_ID ||
+          shared?.type === 'agenda_pause' ||
+          summary === '[CONFIG] AGENDA_PAUSADA'
+        ) {
+          agendaPaused = true;
+          continue;
+        }
 
         const hasBlockKeyword = summaryLower.includes('folga') || 
                                 summaryLower.includes('bloqueado') || 
@@ -429,6 +440,7 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ 
         bookings, 
         blocks,
+        agendaPaused,
         calendarId: activeCalendarId,
         serviceAccountEmail: process.env.GOOGLE_CLIENT_EMAIL || null
       });
@@ -438,8 +450,53 @@ export default async function handler(req: any, res: any) {
     // POST: Criar novo evento (agendamento ou bloqueio)
     // ----------------------------------------------------
     if (req.method === 'POST') {
-      const { type, booking, block, blocks, duration, source } = req.body;
+      const { type, booking, block, blocks, duration, source, paused } = req.body;
       const isAdmin = source === 'admin';
+
+      if (type === 'toggle_pause') {
+        if (paused) {
+          const pauseBody = {
+            id: AGENDA_PAUSE_EVENT_ID,
+            summary: '[CONFIG] AGENDA_PAUSADA',
+            description: 'Configuração automática do sistema: Agenda online pausada (lotada). Não exclua manualmente se quiser manter o site fechado.',
+            start: { date: '2026-01-01' },
+            end: { date: '2026-01-02' },
+            transparency: 'transparent',
+            extendedProperties: {
+              shared: { type: 'agenda_pause' },
+            },
+          };
+          try {
+            await calendar.events.insert({
+              calendarId: activeCalendarId,
+              requestBody: pauseBody,
+            });
+          } catch (err: any) {
+            if (err?.code === 409 || err?.status === 409) {
+              await calendar.events.update({
+                calendarId: activeCalendarId,
+                eventId: AGENDA_PAUSE_EVENT_ID,
+                requestBody: { ...pauseBody, status: 'confirmed' },
+              });
+            } else {
+              throw err;
+            }
+          }
+          return res.status(200).json({ success: true, agendaPaused: true });
+        } else {
+          try {
+            await calendar.events.delete({
+              calendarId: activeCalendarId,
+              eventId: AGENDA_PAUSE_EVENT_ID,
+            });
+          } catch (delErr: any) {
+            if (delErr?.code !== 404 && delErr?.code !== 410 && delErr?.status !== 404 && delErr?.status !== 410) {
+              throw delErr;
+            }
+          }
+          return res.status(200).json({ success: true, agendaPaused: false });
+        }
+      }
 
       if (type === 'booking') {
         const id = booking.id;
@@ -455,6 +512,16 @@ export default async function handler(req: any, res: any) {
 
         // Se for admin, pula verificação de conflitos (Passe Livre)
         if (!isAdmin) {
+          try {
+            const pauseEv = await calendar.events.get({
+              calendarId: activeCalendarId,
+              eventId: AGENDA_PAUSE_EVENT_ID,
+            });
+            if (pauseEv.data && pauseEv.data.status !== 'cancelled') {
+              return res.status(409).json({ error: 'agenda_paused', message: 'A agenda está temporariamente lotada e fechada para novos agendamentos.' });
+            }
+          } catch {}
+
           // --- CHECK DOUBLE BOOKING DIRETO NO GOOGLE CALENDAR ---
           const dayStartIso = `${isoDate}T00:00:00-03:00`;
           const dayEndIso = `${isoDate}T23:59:59-03:00`;
