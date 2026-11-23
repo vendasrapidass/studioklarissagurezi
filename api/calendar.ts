@@ -179,7 +179,7 @@ export default async function handler(req: any, res: any) {
 
   // Resolve dynamic calendarId or client override
   const queryCalendarId = (req.query?.calendarId as string) || (req.headers?.['x-calendar-id'] as string);
-  const activeCalendarId = queryCalendarId || await getDynamicCalendarId();
+  let activeCalendarId = queryCalendarId || await getDynamicCalendarId();
 
   try {
     // ----------------------------------------------------
@@ -217,7 +217,26 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      const events = response.data.items || [];
+      const events: any[] = response.data.items ? [...response.data.items] : [];
+
+      // Buscar também da agenda pessoal Khemanuely@gmail.com se ela tiver compartilhado
+      if (DEFAULT_PROFESSIONAL_EMAIL && activeCalendarId !== DEFAULT_PROFESSIONAL_EMAIL) {
+        try {
+          const profResponse = await calendar.events.list({
+            calendarId: DEFAULT_PROFESSIONAL_EMAIL,
+            timeMin,
+            timeMax,
+            singleEvents: true,
+            orderBy: 'startTime',
+          });
+          if (profResponse.data?.items) {
+            events.push(...profResponse.data.items);
+          }
+        } catch (profErr) {
+          // Não compartilhado ainda ou sem permissão - segue normalmente sem travar
+        }
+      }
+
       const bookings: any[] = [];
       const blocks: any[] = [];
 
